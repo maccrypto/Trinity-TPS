@@ -3,3 +3,8 @@ ArrayInitialize, PositionSelectByIndex, PositionSelectByMagic, std::va_start, __
 MakeCmntTP, MakeCmntRow
 典型的グリッドEAテンプレ, テンプレートEA, 汎用グリッドEA
 …00 / …50
+variable already defined / ambiguous access
+型変換警告	possible loss of data due to type conversion from 'long' to 'int'
+構文系	expression expected / '{' - parameter conversion not allowed / unbalanced parentheses
+配列系	unsupported array type / invalid array access / invalid index value
+オブジェクト演算子	operator= - object required
