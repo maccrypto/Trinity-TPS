@@ -1,23 +1,24 @@
-//  Trinity-TPS Integrated EA - Step A
-//  2025-06-23 build-A0  (compile-clean template)
-
+//+------------------------------------------------------------------+
+//|                                       Trinity-TPS StepB build-B2 |
+//|               compile-clean skeleton  (2025-06-23)               |
+//+------------------------------------------------------------------+
 #property copyright "Trinity-TPS Integrated EA"
-#property version   "1.3-A0"
+#property version   "1.3-B2"
 #property strict
 
-#include <Trade\Trade.mqh>         // CTrade
+#include <Trade\Trade.mqh>
 
-//––– Inputs
-input double InpGrid        = 0.50;         // grid (JPY 0.5 = 500 points)
-input double InpLots        = 0.01;         // lot size
-input int    InpMagicBase   = 20250623;     // magic
-input double InpEquityTgt   = 5000.0;       // equity TP
-input bool   InpDebug       = true;         // log
+//--- Inputs
+input double InpGrid      = 0.50;      // grid size (JPY 0.5 = 500 points)
+input double InpLots      = 0.01;      // lot size
+input int    InpMagicBase = 20250623;  // magic base (col offset added)
+input double InpEquityTgt = 5000.0;    // equity flat-close
+input bool   InpDebug     = true;      // debug flag
 
 #define  DBG(x)  if(InpDebug) Print(x)
 #define  MAX_COLS 2048
 
-//––– Enum / structs -------------------------------------------------
+//--- Column roles
 enum ColRole
   {
    ROLE_NONE   = 0,
@@ -27,29 +28,22 @@ enum ColRole
    ROLE_PROFIT = 4
   };
 
+//--- Column state
 struct ColState
   {
    ColRole role;
    double  lots;
    ulong   ticket;
    ColState(){ Reset(); }
-   ColState(ColRole r,double l=0,ulong t=0){ role=r; lots=l; ticket=t; }
+   ColState(ColRole r,double l,ulong t){ role=r; lots=l; ticket=t; }
    void Reset(){ role=ROLE_NONE; lots=0; ticket=0; }
   };
 
-struct ProfitInfo
-  {
-   int    col;
-   double tgt;
-   double wp;
-   ProfitInfo(){ col=-1; tgt=0; wp=0; }
-  };
-
-//––– Globals --------------------------------------------------------
+//--- Globals
 static ColState g_cols[MAX_COLS];
 static int      g_altClosedRow[MAX_COLS];
 
-static double   gGrid        = 0.0;
+static double   gGrid        = 0.0;   // price width (¥0.5)
 static double   gBasePrice   = 0.0;
 static double   gStartEquity = 0.0;
 static int      gLastRow     = 0;
@@ -58,9 +52,9 @@ static int      gTrendSign   = 0;
 static int      gTrendBCol   = 1;
 static int      gNextCol     = 1;
 
-static CTrade   trade;                      // << MT5 trade helper
+static CTrade   trade;
 
-//––– fwd decl.
+//--- fwd
 void ResetState();
 void CreateTrendPair(int row);
 void CreatePreBsPair(int row);
@@ -69,26 +63,17 @@ void UpdateAlternateCols();
 void CheckAltBE();
 void StepRow(int dir,int newRow,bool pivot);
 
-//------------------------------------------------------------------
-//  OnInit
-//------------------------------------------------------------------
+//+------------------------------------------------------------------+
+//| OnInit                                                          |
+//+------------------------------------------------------------------+
 int OnInit()
   {
- // --- TICK SIZE ---
- double tickSize = SymbolInfoDouble(_Symbol,
-                                    SYMBOL_TRADE_TICK_SIZE);       // OK: Double
- if(tickSize <= 0.0)
-    tickSize = _Point;      // フォールバック
-   if(tickSize <= 0)   // 万一取得失敗
-     tickSize = 1;
-
-   gGrid       = InpGrid * _Point / (double)tickSize;   // grid (points)
-   gBasePrice  = NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_BID),_Digits);
-   gStartEquity= AccountInfoDouble(ACCOUNT_EQUITY);
-
+   gGrid        = InpGrid;   // already price distance (e.g. 0.50¥)
+   gBasePrice   = NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_BID),_Digits);
+   gStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    ArrayInitialize(g_altClosedRow,-1);
-   ResetState();
 
+   ResetState();
    CreateTrendPair(0);
    CreatePreBsPair(0);
 
@@ -96,13 +81,13 @@ int OnInit()
    return(INIT_SUCCEEDED);
   }
 
-//------------------------------------------------------------------
-//  OnTick
-//------------------------------------------------------------------
+//+------------------------------------------------------------------+
+//| OnTick                                                          |
+//+------------------------------------------------------------------+
 void OnTick()
   {
    double bid = SymbolInfoDouble(_Symbol,SYMBOL_BID);
-   int row = (int)MathFloor((bid - gBasePrice)/gGrid + 0.5);
+   int row = (int)MathFloor( (bid - gBasePrice)/gGrid + 0.5 );
    if(row==gLastRow) return;
 
    int  dir     = (row>gLastRow)? 1 : -1;
@@ -114,9 +99,9 @@ void OnTick()
    gLastRow   = row;
   }
 
-//------------------------------------------------------------------
-//  StepRow – skeleton
-//------------------------------------------------------------------
+//+------------------------------------------------------------------+
+//| Step one grid                                                   |
+//+------------------------------------------------------------------+
 void StepRow(int dir,int newRow,bool pivot)
   {
    DBG(StringFormat("[STEP] row=%d dir=%d pivot=%s",newRow,dir,(pivot?"YES":"NO")));
@@ -138,44 +123,43 @@ void StepRow(int dir,int newRow,bool pivot)
    CheckAltBE();
   }
 
-//------------------------------------------------------------------
-//  TrendPair – Buy & Sell 同時
-//------------------------------------------------------------------
+//+------------------------------------------------------------------+
+//| TrendPair                                                       |
+//+------------------------------------------------------------------+
 void CreateTrendPair(int row)
   {
-   int bCol=gNextCol++;
-   int sCol=gNextCol++;
+   int bCol = gNextCol++;
+   int sCol = gNextCol++;
+   gTrendBCol = bCol;
 
    double price = gBasePrice + gGrid*row;
+   ulong  bticket=0, sticket=0;
 
-   ulong bticket=0, sticket=0;
-   if(trade.PositionOpen(_Symbol,ORDER_TYPE_BUY ,InpLots,price,0,0,"TP B"))
-      bticket=trade.ResultOrder();
-   if(trade.PositionOpen(_Symbol,ORDER_TYPE_SELL,InpLots,price,0,0,"TP S"))
-      sticket=trade.ResultOrder();
+   if(trade.Buy (InpLots,_Symbol,price,0,0,"TP B"))
+      bticket = trade.ResultOrder();
+   if(trade.Sell(InpLots,_Symbol,price,0,0,"TP S"))
+      sticket = trade.ResultOrder();
 
-   g_cols[bCol] = ColState(ROLE_TP ,InpLots,bticket);
-   g_cols[sCol] = ColState(ROLE_TP ,InpLots,sticket);
-   gTrendBCol   = bCol;
+   g_cols[bCol] = ColState(ROLE_TP,InpLots,bticket);
+   g_cols[sCol] = ColState(ROLE_TP,InpLots,sticket);
 
    DBG(StringFormat("[TP] row=%d B=%d S=%d",row,bCol,sCol));
   }
 
-//------------------------------------------------------------------
-//  Pre-BS pair
-//------------------------------------------------------------------
+//+------------------------------------------------------------------+
+//| Pre-BS pair                                                     |
+//+------------------------------------------------------------------+
 void CreatePreBsPair(int row)
   {
-   int bCol=gNextCol++;
-   int sCol=gNextCol++;
-
+   int bCol = gNextCol++;
+   int sCol = gNextCol++;
    double price = gBasePrice + gGrid*row;
+   ulong  bticket=0, sticket=0;
 
-   ulong bticket=0, sticket=0;
-   if(trade.PositionOpen(_Symbol,ORDER_TYPE_BUY ,InpLots,price,0,0,"BS B"))
-      bticket=trade.ResultOrder();
-   if(trade.PositionOpen(_Symbol,ORDER_TYPE_SELL,InpLots,price,0,0,"BS S"))
-      sticket=trade.ResultOrder();
+   if(trade.Buy (InpLots,_Symbol,price,0,0,"BS B"))
+      bticket = trade.ResultOrder();
+   if(trade.Sell(InpLots,_Symbol,price,0,0,"BS S"))
+      sticket = trade.ResultOrder();
 
    g_cols[bCol] = ColState(ROLE_BS,InpLots,bticket);
    g_cols[sCol] = ColState(ROLE_BS,InpLots,sticket);
@@ -183,16 +167,16 @@ void CreatePreBsPair(int row)
    DBG(StringFormat("[BS] row=%d bsB=%d bsS=%d",row,bCol,sCol));
   }
 
-//------------------------------------------------------------------
-//  Promote / Update / BE – stub
-//------------------------------------------------------------------
-void PromoteBsToAlt(int dir,int row) { /* TODO: implement */ }
+//+------------------------------------------------------------------+
+//| Promote / ALT / BE  (stubs)                                     |
+//+------------------------------------------------------------------+
+void PromoteBsToAlt(int dir,int row) { /* TODO */ }
 void UpdateAlternateCols()          { /* TODO */ }
 void CheckAltBE()                   { /* TODO */ }
 
-//------------------------------------------------------------------
-//  helpers
-//------------------------------------------------------------------
+//+------------------------------------------------------------------+
+//| Reset                                                           |
+//+------------------------------------------------------------------+
 void ResetState()
   {
    for(int i=0;i<MAX_COLS;i++) g_cols[i].Reset();
@@ -202,3 +186,4 @@ void ResetState()
    gRowAnchor = 0;
    gTrendSign = 0;
   }
+//+------------------------------------------------------------------+
