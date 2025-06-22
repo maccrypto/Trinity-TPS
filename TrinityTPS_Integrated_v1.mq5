@@ -6,7 +6,7 @@
 //|  rev‑I1.0  (2025‑06‑21)                                           |
 //+------------------------------------------------------------------+
 #property strict
-#include <Trade\Trade.mqh>
+#include <Trade/Trade.mqh>
 CTrade trade;
 
 //───────────────────────── Inputs ───────────────────────────────
@@ -249,7 +249,14 @@ void CheckAltBE(int curRow)
 }
 
 //───────────────────────── WeightedClose for Profit ─────────────
-inline double WeightedPrice() { return (High[0]+Low[0]+2*Close[0])*0.25; }
+inline double WeightedPrice()
+{
+   // 現在バーの High/Low/Close を取得
+   double h = iHigh(InpSymbol, PERIOD_CURRENT, 0);
+   double l = iLow (InpSymbol, PERIOD_CURRENT, 0);
+   double c = iClose(InpSymbol, PERIOD_CURRENT, 0);
+   return (h + l + 2.0*c) * 0.25;
+}
 
 void CheckProfitWeightedClose()
 {
@@ -314,8 +321,18 @@ void StepRow(int newRow,int dir)
 //───────────────────────── Init / Tick ─────────────────────────
 void ResetState()
 {
-   ArrayInitialize(g_cols,0);
-   ArrayInitialize(g_altClosedRow,-9999);
+    // ─── 配列を手動で初期化 ───
+   for(uint i=0;i<=MAX_COL+1;i++)
+   {
+      g_cols[i].id         = 0;
+      g_cols[i].setId      = 0;
+      g_cols[i].role       = ROLE_NONE;
+      g_cols[i].lastDir    = 0;
+      g_cols[i].altRefRow  = 0;
+      g_cols[i].altRefDir  = 0;
+      g_cols[i].posCnt     = 0;
+      g_altClosedRow[i]    = -9999;
+   }
    gGrid          = InpGridSize;
    gBasePrice     = gRowAnchor = SymbolInfoDouble(InpSymbol,SYMBOL_BID);
    gLastRow       = 0;
