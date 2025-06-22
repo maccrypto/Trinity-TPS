@@ -8,3 +8,9 @@ variable already defined / ambiguous access
 構文系	expression expected / '{' - parameter conversion not allowed / unbalanced parentheses
 配列系	unsupported array type / invalid array access / invalid index value
 オブジェクト演算子	operator= - object required
+OP_BUY
+OP_SELL
+OrderSend(
+OrderClose(
+OrderModify(
+Symbol()       ;  // 旧式ティッカー比較で多発
