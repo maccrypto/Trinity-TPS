@@ -1,7 +1,7 @@
 
 # Trinity-TPS 統合 EA プロジェクト
 
-> **最新ビルド:** `Trinity-TPS2-final.mq5`  
+> **最新ビルド:** `Trinity-TPS_Integrated_V1.mq5`  
 > **開発ブランチ:** `main`  ─ 安定版 / `dev-o3`, `dev-o4` ─ AI 別作業ライン
 
 ---
@@ -17,7 +17,7 @@
 ## 2. フォルダ構成
 | パス | 説明 |
 | ---- | ---- |
-| `/Trinity-TPS2-final.mq5` | 統合最新版 |
+| `/Trinity-TPS_intergrated_V1.mq5` | 統合最新版 |
 | `/Trinity1.0.3.txt` | 旧 Trinity リファレンス |
 | `/TPS0.1.0.txt` | 旧 TPS リファレンス |
 | `/docs/` | 仕様書・参考資料 |
