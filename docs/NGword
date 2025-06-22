@@ -1,0 +1,5 @@
+Anchor / ZeroLine / Round / Rounding / Snap / SnapToGrid / 0.5円グリッド
+ArrayInitialize, PositionSelectByIndex, PositionSelectByMagic, std::va_start, __VA_ARGS__, <stdlib.mqh>
+MakeCmntTP, MakeCmntRow
+典型的グリッドEAテンプレ, テンプレートEA, 汎用グリッドEA
+…00 / …50
