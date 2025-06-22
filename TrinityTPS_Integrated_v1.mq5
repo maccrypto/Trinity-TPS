@@ -292,32 +292,42 @@ void CheckTargetEquity()
    OnInit();
 }
 
-//───────────────────────── Row stepping ─────────────────────────
-void StepRow(int newRow,int dir)
-{
-   bool pivot = (gTrendSign!=0 && dir!=gTrendSign);
-   if(InpDbgLog) PrintFormat("[STEP] newRow=%d dir=%d pivot=%s",newRow,dir,pivot?"YES":"NO");
 
-   if(pivot || gTrendSign==0)
+//───────────────────────── Row stepping ─────────────────────────
+void StepRow(int newRow,int direction)
+{
+   bool pivot = (gTrendSign != 0 && direction != gTrendSign);
+   if(InpDbgLog)
+      PrintFormat("[STEP] newRow=%d dir=%d pivot=%s",
+                  newRow, direction, pivot ? "YES" : "NO");
+
+   if(gTrendSign == 0)
    {
-      // pivot: finalize current trend pair, create BS pair, then new trend pair
-      FixTrendPair(dir,newRow);
-      CreateBsPair(newRow);          //先乗せ BS
-      CreateTrendPair(newRow);       // new Trend‑Pair in same row
+      // 初回グリッド移動：TrendPair のみ生成
+      CreateTrendPair(newRow);
+   }
+   else if(pivot)
+   {
+      // Pivot 時：Profit→Alt→BS→新 TrendPair
+      FixTrendPair(direction, newRow);
+      CreateBsPair(newRow);
+      CreateTrendPair(newRow);
    }
    else
    {
-      SafeRollTrendPair(newRow,dir);
+      // 継続トレンド：Safe roll
+      SafeRollTrendPair(newRow, direction);
    }
 
-   UpdateAlternateCols(newRow);
-   CheckAltBE(newRow);          // break‑even closures
+  // Alternate 処理
+  UpdateAlternateCols(newRow);
+   CheckAltBE(newRow);
 
+   // 状態更新
    gLastRow   = newRow;
-   gTrendSign = dir;
-   gRowAnchor = gBasePrice + newRow*gGrid;
+   gTrendSign = direction;
+   gRowAnchor = gBasePrice + newRow * gGrid;
 }
-
 //───────────────────────── Init / Tick ─────────────────────────
 void ResetState()
 {
