@@ -1,9 +1,37 @@
-name: CI placeholder
+name: Build MQL5 EA   # ワークフロー名（自由に変えてOK）
 
-on: push
+# いつ動かすか
+on:
+  push:               # push 時
+    branches: [ main, develop ]
+  pull_request:       # PR 作成 / 更新 時
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-latest      # ← 必ず Windows
+
     steps:
-      - run: echo \"Placeholder – add MetaEditor build later\"
+      # ① ソースを仮想マシンにコピー
+      - uses: actions/checkout@v4
+
+      # ② MetaTrader5 (MetaEditor) を自動インストール
+      #    ─ Chocolatey という Windows 用パッケージ管理を使う例
+      - name: Install MetaTrader 5
+        run: choco install metatrader5 --yes
+
+      # ③ EA をコンパイル
+      - name: Compile EA
+        run: |
+          "C:\\Program Files\\MetaTrader 5\\metaeditor.exe" `
+            /compile:src\\TrinityTPS_Integrated_v1.mq5 `
+            /log:build.log `
+            /portable
+
+      # ④ コンパイルログ & 出来た ex5 を成果物として保存（ダウンロード可能に）
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            build.log
+            **/*.ex5
