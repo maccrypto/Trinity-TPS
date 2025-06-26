@@ -1,0 +1,9 @@
+name: CI placeholder
+
+on: push
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - run: echo \"Placeholder – add MetaEditor build later\"
