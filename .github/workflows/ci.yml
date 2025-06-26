@@ -1,37 +1,10 @@
-name: Build MQL5 EA      # ← 好きな名前でOK
+- name: Install MetaTrader 5
+  shell: powershell
+  run: |
+    # 公式インストーラをダウンロード
+    Invoke-WebRequest `
+      -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" `
+      -OutFile mt5setup.exe
 
-# いつ動かすか
-on:
-  push:
-    branches: [ main, develop, feature/** ]   # ← feature/* も全部対象
-  pull_request:                               # すべてのPRで実行
-
-# ここから Job 定義 -------------v
-jobs:
-  build:
-    runs-on: windows-latest      # MetaEditor は Windows 必須
-
-    steps:
-      # ソース取得
-      - uses: actions/checkout@v4
-
-      # MetaTrader 5 (MetaEditor) を Chocolatey でインストール
-      - name: Install MetaTrader 5
-        run: choco install metatrader5 --yes --no-progress
-
-      # EA をコンパイル
-      - name: Compile EA
-        run: |
-          "C:\Program Files\MetaTrader 5\metaeditor.exe" ^
-            /compile:src\trinity1.0.3.mq5 ^
-            /log:build.log ^
-            /portable
-
-      # コンパイルログと生成 .ex5 をダウンロード可能に
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-output
-          path: |
-            build.log
-            **/*.ex5
+    # サイレント（GUIなし）でインストール
+    Start-Process -FilePath .\mt5setup.exe -ArgumentList "/silent" -Wait
