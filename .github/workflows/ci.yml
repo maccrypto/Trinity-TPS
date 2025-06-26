@@ -20,12 +20,12 @@ jobs:
         run: choco install metatrader5 --yes
 
       # ③ EA をコンパイル
-      - name: Compile EA
-        run: |
-          "C:\\Program Files\\MetaTrader 5\\metaeditor.exe" `
-            /compile:src\\TrinityTPS_Integrated_v1.mq5 `
-            /log:build.log `
-            /portable
+      name: Compile EA
+  run: |
+    "C:\\Program Files\\MetaTrader 5\\metaeditor.exe" `
+      /compile:src\\trinity1.0.3.mq5 `
+      /log:build.log `
+      /portable
 
       # ④ コンパイルログ & 出来た ex5 を成果物として保存（ダウンロード可能に）
       - name: Upload artifacts
