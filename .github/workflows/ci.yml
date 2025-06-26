@@ -8,3 +8,20 @@
 
     # サイレント（GUIなし）でインストール
     Start-Process -FilePath .\mt5setup.exe -ArgumentList "/silent" -Wait
+
+# EA をコンパイル
+      - name: Compile EA
+        run: |
+          "C:\Program Files\MetaTrader 5\metaeditor.exe" ^
+            /compile:src\trinity1.0.3.mq5 ^
+            /log:build.log ^
+            /portable
+
+      # コンパイルログと生成 .ex5 をダウンロード可能に
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            build.log
+            **/*.ex5
