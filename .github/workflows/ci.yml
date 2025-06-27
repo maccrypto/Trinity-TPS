@@ -1,7 +1,3 @@
-- name: Install MetaTrader 5 (auto)
-  shell: powershell
-  run: |
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    iwr -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" `
-        -OutFile mt5.exe -UseBasicParsing
-    Start-Process .\mt5.exe -ArgumentList "/auto /silent" -Wait
+- uses: mhriemers/metaeditor-compiler@v1
+  with:
+    file: src/trinity1.0.3.mq5
