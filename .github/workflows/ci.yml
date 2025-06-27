@@ -1,2 +1,6 @@
-- name: Unzip MetaEditor
-  run: 7z x MetaEditor64.zip -o./metaeditor
+- name: Compile EA
+  run: |
+    .\metaeditor\metaeditor64.exe ^
+      /compile:src\trinity1.0.3.mq5 ^
+      /log:build.log ^
+      /portable
