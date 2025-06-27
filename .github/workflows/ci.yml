@@ -34,7 +34,9 @@ jobs:
 
       # 3.1) 内部の .7z をさらに展開して exe を取り出す
       - name: Un7zip inner archive
-        run: 7z x metaeditor/MetaEditor64.7z "-o./metaeditor/bin"name: Build MQL5 EA
+        run: 7z x metaeditor/MetaEditor64.7z "-o./metaeditor/bin"
+        
+        name: Build MQL5 EA
 
 on:
   push:
