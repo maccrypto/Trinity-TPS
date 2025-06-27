@@ -24,7 +24,7 @@ jobs:
         with:
           repository: ${{ github.repository }}
           tag: metaeditor-portable-v1        # ← さきほど作成したタグ
-          fileName: MetaEditor64.zip         # ← アセット名
+         
 
       # ③ 解凍
       - name: Unzip MetaEditor
