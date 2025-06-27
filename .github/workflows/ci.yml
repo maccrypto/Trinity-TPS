@@ -1,6 +1,2 @@
-- name: Download MetaEditor portable
-  uses: robinraju/release-downloader@v1
-  with:
-    repository: ${{ github.repository }}
-    tag: metaeditor-portable-v1      # ← 今作ったタグ
-    fileName: MetaEditor64.zip       # ← アセット名
+- name: Unzip MetaEditor
+  run: 7z x MetaEditor64.zip -o./metaeditor
