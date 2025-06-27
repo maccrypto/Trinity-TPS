@@ -32,6 +32,11 @@ jobs:
         run: |
           Expand-Archive -Path MetaEditor64.zip -DestinationPath metaeditor -Force
 
+- name: List extracted files   # ← 追加
+  shell: powershell
+  run: |
+    Get-ChildItem -Recurse metaeditor
+
       # 4. EA をコンパイル
       - name: Compile EA
         run: |
