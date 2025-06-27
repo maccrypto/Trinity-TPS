@@ -1,2 +1,50 @@
-- name: Unzip MetaEditor
-  run: 7z x MetaEditor64.zip -o./metaeditor
+name: Build MQL5 EA
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - feature/**
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      # 1. ソースを取得
+      - uses: actions/checkout@v4
+
+      # 2. MetaEditor ポータブル版（MetaEditor64.zip）を Release からダウンロード
+      - name: Download MetaEditor portable
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: ${{ github.repository }}
+          tag: metaeditor-portable-v1        # ← 先ほど作成したリリースのタグ
+          fileName: MetaEditor64.zip         # ← リリースに添付した ZIP 名
+
+      # 3. 解凍（PowerShell 標準 Expand-Archive を使用）
+      - name: Unzip MetaEditor
+        shell: powershell
+        run: |
+          Expand-Archive -Path MetaEditor64.zip -DestinationPath metaeditor -Force
+
+      # 4. EA をコンパイル
+      - name: Compile EA
+        run: |
+          .\metaeditor\metaeditor64.exe ^
+            /compile:src\trinity1.0.3.mq5 ^
+            /log:build.log ^
+            /portable
+
+      # 5. ビルド結果をダウンロードできるようアップロード
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            build.log
+            **/*.ex5
