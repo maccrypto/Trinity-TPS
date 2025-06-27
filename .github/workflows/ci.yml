@@ -1,3 +1,6 @@
-- uses: mhriemers/metaeditor-compiler@v1
+- name: Download MetaEditor portable
+  uses: robinraju/release-downloader@v1
   with:
-    file: src/trinity1.0.3.mq5
+    repository: ${{ github.repository }}
+    tag: metaeditor-portable-v1      # ← 今作ったタグ
+    fileName: MetaEditor64.zip       # ← アセット名
