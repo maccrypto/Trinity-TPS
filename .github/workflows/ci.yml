@@ -32,12 +32,13 @@ jobs:
         run: |
           Expand-Archive -Path MetaEditor64.zip -DestinationPath metaeditor -Force
 
-- name: List extracted files   # ← 追加
-  shell: powershell
-  run: |
-    Get-ChildItem -Recurse metaeditor
+      # 4. 解凍結果をリスト表示（デバッグ用）
+      - name: List extracted files
+        shell: powershell
+        run: |
+          Get-ChildItem -Recurse metaeditor
 
-      # 4. EA をコンパイル
+      # 5. EA をコンパイル
       - name: Compile EA
         run: |
           .\metaeditor\metaeditor64.exe ^
@@ -45,7 +46,7 @@ jobs:
             /log:build.log ^
             /portable
 
-      # 5. ビルド結果をダウンロードできるようアップロード
+      # 6. ビルド結果をダウンロードできるようアップロード
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
