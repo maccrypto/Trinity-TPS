@@ -15,38 +15,36 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      # 1. ソースを取得
+      # 1) ソースを取得
       - uses: actions/checkout@v4
 
-      # 2. MetaEditor ポータブル版（MetaEditor64.zip）を Release からダウンロード
+      # 2) Release から MetaEditor の ZIP を取得
       - name: Download MetaEditor portable
         uses: robinraju/release-downloader@v1
         with:
           repository: ${{ github.repository }}
-          tag: metaeditor-portable-v1        # ← 先ほど作成したリリースのタグ
-          fileName: MetaEditor64.zip         # ← リリースに添付した ZIP 名
+          tag: metaeditor-portable-v1        # ← リリースのタグ
+          fileName: MetaEditor64.zip         # ← アセット名
 
-      # 3. 解凍（PowerShell 標準 Expand-Archive を使用）
+      # 3) ZIP を展開（中に .7z が入っている）
       - name: Unzip MetaEditor
         shell: powershell
         run: |
           Expand-Archive -Path MetaEditor64.zip -DestinationPath metaeditor -Force
 
-      # 4. 解凍結果をリスト表示（デバッグ用）
-      - name: List extracted files
-        shell: powershell
-        run: |
-          Get-ChildItem -Recurse metaeditor
+      # 3.1) 内部の .7z をさらに展開して exe を取り出す
+      - name: Un7zip inner archive
+        run: 7z x metaeditor/MetaEditor64.7z -o./metaeditor/bin
 
-      # 5. EA をコンパイル
+      # 4) EA をコンパイル
       - name: Compile EA
         run: |
-          .\metaeditor\metaeditor64.exe ^
+          .\metaeditor\bin\metaeditor64.exe ^
             /compile:src\trinity1.0.3.mq5 ^
             /log:build.log ^
             /portable
 
-      # 6. ビルド結果をダウンロードできるようアップロード
+      # 5) ビルド結果（log と .ex5）をダウンロードできるようにする
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
