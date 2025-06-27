@@ -18,63 +18,31 @@ jobs:
       # 1) ソースを取得
       - uses: actions/checkout@v4
 
-      # 2) Release から MetaEditor の ZIP を取得
+      # 2) MetaEditor の ZIP を Release から取得
       - name: Download MetaEditor portable
         uses: robinraju/release-downloader@v1
         with:
           repository: ${{ github.repository }}
-          tag: metaeditor-portable-v1        # ← リリースのタグ
-          fileName: MetaEditor64.zip         # ← アセット名
+          tag: metaeditor-portable-v1
+          fileName: MetaEditor64.zip
 
-      # 3) ZIP を展開（中に .7z が入っている）
-      - name: Unzip MetaEditor
+      # 3) 外側の ZIP を展開（中に .7z が入っている）
+      - name: Unzip outer ZIP
         shell: powershell
         run: |
           Expand-Archive -Path MetaEditor64.zip -DestinationPath metaeditor -Force
 
-      # 3.1) 内部の .7z をさらに展開して exe を取り出す
+      # 4) 内側 .7z を展開して exe を取り出す
       - name: Un7zip inner archive
         run: 7z x metaeditor/MetaEditor64.7z "-o./metaeditor/bin"
-        
-        name: Build MQL5 EA
 
-on:
-  push:
-    branches:
-      - main
-      - develop
-      - feature/**
-  pull_request:
-    branches:
-      - develop
-
-jobs:
-  build:
-    runs-on: windows-latest
-
-    steps:
-      # 1) ソースを取得
-      - uses: actions/checkout@v4
-
-      # 2) Release から MetaEditor の ZIP を取得
-      - name: Download MetaEditor portable
-        uses: robinraju/release-downloader@v1
-        with:
-          repository: ${{ github.repository }}
-          tag: metaeditor-portable-v1        # ← リリースのタグ
-          fileName: MetaEditor64.zip         # ← アセット名
-
-      # 3) ZIP を展開（中に .7z が入っている）
-      - name: Unzip MetaEditor
+      # 5) （デバッグ）展開結果を一覧表示
+      - name: List extracted files
         shell: powershell
         run: |
-          Expand-Archive -Path MetaEditor64.zip -DestinationPath metaeditor -Force
+          Get-ChildItem -Recurse metaeditor
 
-      # 3.1) 内部の .7z をさらに展開して exe を取り出す
-      - name: Un7zip inner archive
-        run: 7z x metaeditor/MetaEditor64.7z "-o./metaeditor/bin"
-
-      # 4) EA をコンパイル
+      # 6) EA をコンパイル
       - name: Compile EA
         run: |
           .\metaeditor\bin\metaeditor64.exe ^
@@ -82,7 +50,7 @@ jobs:
             /log:build.log ^
             /portable
 
-      # 5) ビルド結果（log と .ex5）をダウンロードできるようにする
+      # 7) ログと .ex5 をアーティファクトへ
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
