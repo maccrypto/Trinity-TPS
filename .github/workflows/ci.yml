@@ -2,49 +2,41 @@ name: Build MQL5 EA
 
 on:
   push:
-    branches:
-      - main
-      - develop
-      - feature/**
+    branches: [ main, develop, feature/** ]
   pull_request:
-    branches:
-      - develop
+    branches: [ develop ]
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-      # 1) ソースをチェックアウト
+      # 1) ソース取得
       - uses: actions/checkout@v4
 
-           # 2) Chocolatey で MetaTrader 5 を prerelease インストール
+      # 2) Chocolatey で MetaTrader 5 インストール
       - name: Install MetaTrader 5
         run: choco install metatrader5 --yes --pre
 
-      # 3) MetaEditor.exe のパスを探して環境変数 MT_PATH にセット
-      - name: Locate MetaEditor
-        shell: cmd
-        run: |
-          set "MT_PATH=%ProgramFiles%\MetaTrader 5\metaeditor.exe"
-          if not exist "%MT_PATH%" set "MT_PATH=%ProgramFiles(x86)%\MetaTrader 5\metaeditor.exe"
-          echo Found MetaEditor at %MT_PATH%
-
-            # 4) EA をコンパイル via PowerShell
-      - name: Compile EA
+      # 3) PowerShell でパス検索→コンパイル
+      - name: Locate & Compile EA
         shell: powershell
         run: |
-          # MetaEditor.exe のパスを探す
-          $exe = Join-Path $Env:ProgramFiles 'MetaTrader 5\metaeditor.exe'
-          if (-not (Test-Path $exe)) {
-            $exe = Join-Path $Env:'ProgramFiles(x86)' 'MetaTrader 5\metaeditor.exe'
+          # MetaEditor.exe のありかを探す
+          $paths = @(
+            "$Env:ProgramFiles\MetaTrader 5\metaeditor.exe",
+            "$Env:ProgramFiles(x86)\MetaTrader 5\metaeditor.exe"
+          )
+          foreach($p in $paths) {
+            if(Test-Path $p) { $exe = $p; break }
           }
+          if(-not $exe) { throw "MetaEditor.exe が見つかりませんでした" }
           Write-Host "Using MetaEditor at $exe"
+
           # CLI でコンパイル
           & $exe /compile:src\trinity1.0.3.mq5 /log:build.log /portable
 
-
-      # 5) build.log と .ex5 をアーティファクトにアップロード
+      # 4) 成果物をアップロード
       - uses: actions/upload-artifact@v4
         with:
           name: build-output
