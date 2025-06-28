@@ -69,16 +69,23 @@ bool SelectPosByIndex(int index)
 }
 
 //──────────────── Duplicate guard ───────────────────────────────
-bool HasPos(uint col,int row)
-{
+// 例：位置とロールを厳密にチェックするイメージ
+bool HasPos(int col, int row)
+  {
    for(int i=PositionsTotal()-1;i>=0;i--)
-   {
-      if(!SelectPosByIndex(i)) continue;
-      int r; uint c; if(!Parse(PositionGetString(POSITION_COMMENT),r,c)) continue;
-      if(r==row && c==col) return true;
-   }
-   return false;
-}
+     {
+       ulong ticket = PositionGetTicket(i);
+       if(PositionSelectByTicket(ticket))
+         {
+           int pCol  = (int)PositionGetInteger(POSITION_MAGIC);   // ←魔法数で列管理
+           int pRow  = (int)PositionGetInteger(POSITION_COMMENT); // ←コメントで行管理
+           if(pCol==col && pRow==row)
+              return true;          // すでに使用済みセル
+         }
+     }
+   return false;                    // 空セル
+  }
+
 
 //──────────────── Market order helper ────────────────────────────
 bool Place(ENUM_ORDER_TYPE t,uint col,int row,bool isAltFirst=false)
@@ -88,8 +95,8 @@ bool Place(ENUM_ORDER_TYPE t,uint col,int row,bool isAltFirst=false)
    double price=(t==ORDER_TYPE_BUY)? SymbolInfoDouble(InpSymbol,SYMBOL_ASK)
                                   : SymbolInfoDouble(InpSymbol,SYMBOL_BID);
    bool ok=(t==ORDER_TYPE_BUY)
-            ? trade.Buy (InpLot,InpSymbol,price,0,0,Cmnt(row,col))
-            : trade.Sell(InpLot,InpSymbol,price,0,0,Cmnt(row,col));
+            Place( ORDER_TYPE_BUY, col, newRow, /*isAltFirst=*/false );
+           Place( ORDER_TYPE_SELL, col, newRow, /*isAltFirst=*/false );
    if(ok)
    {
       colTab[col].posCnt++;
