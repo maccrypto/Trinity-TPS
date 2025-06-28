@@ -95,8 +95,8 @@ bool Place(ENUM_ORDER_TYPE t,uint col,int row,bool isAltFirst=false)
    double price=(t==ORDER_TYPE_BUY)? SymbolInfoDouble(InpSymbol,SYMBOL_ASK)
                                   : SymbolInfoDouble(InpSymbol,SYMBOL_BID);
    bool ok=(t==ORDER_TYPE_BUY)
-            Place( ORDER_TYPE_BUY, col, newRow, /*isAltFirst=*/false );
-           Place( ORDER_TYPE_SELL, col, newRow, /*isAltFirst=*/false );
+            Place( ORDER_TYPE_BUY, col, newRow, false );
+         　  Place( ORDER_TYPE_SELL, col, newRow, false );
    if(ok)
    {
       colTab[col].posCnt++;
