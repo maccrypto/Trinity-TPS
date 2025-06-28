@@ -14,32 +14,21 @@ jobs:
       # 1) ソースをチェックアウト
       - uses: actions/checkout@v4
 
-      # 2) MT5セットアップファイルをダウンロード
-      - name: Download MT5 installer
-        shell: powershell
-        run: |
-          Invoke-WebRequest `
-            -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" `
-            -OutFile mt5setup.exe
+      # 2) Chocolatey で MetaTrader 5 の prerelease をインストール
+      - name: Install MetaTrader 5 via Chocolatey
+        run: choco install metatrader5 --yes --pre
 
-      # 3) MT5 をサイレントインストール
-      - name: Install MT5 silently
-        shell: powershell
-        run: |
-          Start-Process -FilePath .\mt5setup.exe `
-            -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/DIR="C:\mt5"' `
-            -Wait
-
-      # 4) MQL5 EA をコンパイル
+      # 3) MQL5 EA をコンパイル
       - name: Compile MQL5 EA
         uses: fx31337/mql-compile-action@v2
         with:
           path: src/trinity1.0.3.mq5
           include: src
           log-file: build.log
-          mt-path: C:\mt5            # ← 先ほどインストールした場所
+          mt-path: 'C:\Program Files\MetaTrader 5'  # Chocolatey がインストールする既定のパス
+          # init-platform: false  # デフォルトで false のまま
 
-      # 5) build.log と .ex5 をアーティファクトとして保存
+      # 4) build.log と生成された .ex5 をアーティファクトとして保存
       - uses: actions/upload-artifact@v4
         with:
           name: build-output
