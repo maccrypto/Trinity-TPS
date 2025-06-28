@@ -30,11 +30,19 @@ jobs:
           if not exist "%MT_PATH%" set "MT_PATH=%ProgramFiles(x86)%\MetaTrader 5\metaeditor.exe"
           echo Found MetaEditor at %MT_PATH%
 
-      # 4) EA をコンパイル
+            # 4) EA をコンパイル via PowerShell
       - name: Compile EA
-        shell: cmd
+        shell: powershell
         run: |
-          "%MT_PATH%" /compile:src\trinity1.0.3.mq5 /log:build.log /portable
+          # MetaEditor.exe のパスを探す
+          $exe = Join-Path $Env:ProgramFiles 'MetaTrader 5\metaeditor.exe'
+          if (-not (Test-Path $exe)) {
+            $exe = Join-Path $Env:'ProgramFiles(x86)' 'MetaTrader 5\metaeditor.exe'
+          }
+          Write-Host "Using MetaEditor at $exe"
+          # CLI でコンパイル
+          & $exe /compile:src\trinity1.0.3.mq5 /log:build.log /portable
+
 
       # 5) build.log と .ex5 をアーティファクトにアップロード
       - uses: actions/upload-artifact@v4
