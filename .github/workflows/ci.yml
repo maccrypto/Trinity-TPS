@@ -1,34 +1,53 @@
-name: Build MQL5 EA   # ワークフロー名（自由に変えてOK）
+name: Build MQL5 EA
 
-# いつ動かすか
 on:
-  push:               # push 時
-    branches: [ main, develop ]
-  pull_request:       # PR 作成 / 更新 時
+  push:
+    branches:
+      - main
+      - develop
+      - feature/**
+  pull_request:
+    branches:
+      - develop
 
 jobs:
   build:
-    runs-on: windows-latest      # ← 必ず Windows
+    runs-on: windows-latest
 
     steps:
-      # ① ソースを仮想マシンにコピー
+      # 1) リポジトリをチェックアウト
       - uses: actions/checkout@v4
 
-      # ② MetaTrader5 (MetaEditor) を自動インストール
-      #    ─ Chocolatey という Windows 用パッケージ管理を使う例
-      - name: Install MetaTrader 5
-        run: choco install metatrader5 --yes
+      # 2) Release から MetaEditor の ZIP をダウンロード
+      - name: Download MetaEditor portable
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: ${{ github.repository }}
+          tag: metaeditor-portable-v1
+          fileName: MetaEditor64.zip
 
-      # ③ EA をコンパイル
-      name: Compile EA
-  run: |
-    "C:\\Program Files\\MetaTrader 5\\metaeditor.exe" `
-      /compile:src\\trinity1.0.3.mq5 `
-      /log:build.log `
-      /portable
+      # 3) outer ZIP を解凍
+      - name: Unzip outer ZIP
+        shell: powershell
+        run: |
+          Expand-Archive -Path MetaEditor64.zip -DestinationPath metaeditor -Force
 
-      # ④ コンパイルログ & 出来た ex5 を成果物として保存（ダウンロード可能に）
-      - name: Upload artifacts
+      # 4) inner .7z を解凍して exe を取り出し
+      - name: Un7zip inner archive
+        run: 7z x metaeditor/MetaEditor64.7z "-o./metaeditor/bin"
+
+      # 5) 解凍結果を一覧表示（デバッグ用）
+      - name: List extracted files
+        shell: powershell
+        run: |
+          Get-ChildItem -Recurse metaeditor
+
+      # 6) EA をコンパイル
+      - name: Compile EA
+        run: .\metaeditor\bin\metaeditor64.exe /compile:src\trinity1.0.3.mq5 /log:build.log /portable
+
+      # 7) build.log と .ex5 をアーティファクトとして保存
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: build-output
