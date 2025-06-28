@@ -18,17 +18,25 @@ jobs:
       # 1) ソースをチェックアウト
       - uses: actions/checkout@v4
 
-      # 2) Chocolatey で MetaTrader 5 を prerelease インストール
+           # 2) Chocolatey で MetaTrader 5 を prerelease インストール
       - name: Install MetaTrader 5
         run: choco install metatrader5 --yes --pre
 
-      # 3) EA をコンパイル (CMD シェルを使って /compile: を渡す)
+      # 3) MetaEditor.exe のパスを探して環境変数 MT_PATH にセット
+      - name: Locate MetaEditor
+        shell: cmd
+        run: |
+          set "MT_PATH=%ProgramFiles%\MetaTrader 5\metaeditor.exe"
+          if not exist "%MT_PATH%" set "MT_PATH=%ProgramFiles(x86)%\MetaTrader 5\metaeditor.exe"
+          echo Found MetaEditor at %MT_PATH%
+
+      # 4) EA をコンパイル
       - name: Compile EA
         shell: cmd
         run: |
-          "C:\Program Files\MetaTrader 5\metaeditor.exe" /compile:src\trinity1.0.3.mq5 /log:build.log /portable
+          "%MT_PATH%" /compile:src\trinity1.0.3.mq5 /log:build.log /portable
 
-      # 4) build.log と .ex5 をアーティファクトにアップロード
+      # 5) build.log と .ex5 をアーティファクトにアップロード
       - uses: actions/upload-artifact@v4
         with:
           name: build-output
