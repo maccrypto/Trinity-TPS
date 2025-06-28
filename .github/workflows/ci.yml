@@ -15,22 +15,21 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      # 1) ソースを取得
+      # 1) ソースをチェックアウト
       - uses: actions/checkout@v4
 
-      # 2) MetaEditor を自動インストール
-      - name: Setup MetaEditor
-        uses: mhriemers/metaeditor-compiler@v1
+      # 2) MQL5 をコンパイル
+      - name: Compile MQL5 EA
+        uses: fx31337/mql-compile-action@v2
+        with:
+          path: 'src/trinity1.0.3.mq5'   # ビルドしたい MQ5 ファイル
+          include: 'src'                # Include パス（Trade.mqh 等があるディレクトリ）
+          log-file: 'build.log'         # 出力ログ名
 
-      # 3) EA をコンパイル
-      - name: Compile EA
-        run: |
-          metaeditor.exe /compile:src\trinity1.0.3.mq5 /log:build.log /portable
-
-      # 4) 結果をアーティファクトへ
+      # 3) ビルド結果をアーティファクト保存
       - uses: actions/upload-artifact@v4
         with:
           name: build-output
           path: |
             build.log
-            **/*.ex5
+            src/*.ex5
