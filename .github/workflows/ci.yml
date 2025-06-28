@@ -11,32 +11,33 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      # 1) ソース取得
+      # 1) ソースをチェックアウト
       - uses: actions/checkout@v4
 
-      # 2) Chocolatey で MetaTrader 5 インストール
+      # 2) Chocolatey で MetaTrader 5 を prerelease インストール
       - name: Install MetaTrader 5
         run: choco install metatrader5 --yes --pre
 
-      # 3) PowerShell でパス検索→コンパイル
+      # 3) Locate & Compile EA via PowerShell
       - name: Locate & Compile EA
         shell: powershell
         run: |
-          # MetaEditor.exe のありかを探す
+          # define candidate paths
           $paths = @(
             "$Env:ProgramFiles\MetaTrader 5\metaeditor.exe",
             "$Env:ProgramFiles(x86)\MetaTrader 5\metaeditor.exe"
           )
-          foreach($p in $paths) {
-            if(Test-Path $p) { $exe = $p; break }
+          # pick first existing
+          $exe = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) {
+            throw 'MetaEditor.exe not found in ProgramFiles or ProgramFiles(x86)'
           }
-          if(-not $exe) { throw "MetaEditor.exe が見つかりませんでした" }
           Write-Host "Using MetaEditor at $exe"
 
-          # CLI でコンパイル
+          # compile via CLI
           & $exe /compile:src\trinity1.0.3.mq5 /log:build.log /portable
 
-      # 4) 成果物をアップロード
+      # 4) build.log and .ex5 artifacts
       - uses: actions/upload-artifact@v4
         with:
           name: build-output
