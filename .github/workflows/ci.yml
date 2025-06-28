@@ -1,34 +1,23 @@
-name: Build MQL5 EA
+//──────────────── Duplicate guard ───────────────────────────────
+// 同一セル（col,row）に既存ポジションがあるかをチェック
+bool HasPos(int col, int row)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket))
+         continue;
 
-on:
-  push:
-    branches: [ main, develop, feature/** ]
-  pull_request:
-    branches: [ develop ]
+      // 1) Magic (列) は整数プロパティとして取得
+      long magic = PositionGetInteger(POSITION_MAGIC);
+      int pCol = (int)magic;
 
-jobs:
-  build:
-    runs-on: windows-latest
+      // 2) Comment (行) は文字列プロパティとして取得し、整数に変換
+      string comment = PositionGetString(POSITION_COMMENT);
+      int pRow = StringToInteger(comment);
 
-    steps:
-      # 1) ソースを取得
-      - uses: actions/checkout@v4
-
-      # 2) Chocolatey 経由で MetaTrader 5 を prerelease インストール
-      - name: Install MetaTrader 5
-        shell: pwsh
-        run: |
-          choco install metatrader5 --yes --pre
-          # インストール完了待ち
-          Start-Sleep -Seconds 10
-
-      name: Skip compilation (temporary)
-       if: false
-       run: echo "Compilation is skipped to focus on code fixes"
-      # 4) 成果物をアップロード
-      - uses: actions/upload-artifact@v4
-        with:
-          name: build-output
-          path: |
-            build.log
-            src/*.ex5
+      if(pCol == col && pRow == row)
+         return true;  // 既使用セル
+   }
+   return false;  // 空セル
+}
