@@ -4,9 +4,9 @@ on:
   push:
     branches:
       - main
-      - feature/fix-cell-reuse    # ← ここに追加したいブランチを列挙
+      - feature/fix-cell-reuse
   pull_request:
-  workflow_dispatch:            # 手動トリガー用
+  workflow_dispatch:
 
 jobs:
   test:
@@ -17,29 +17,25 @@ jobs:
 
       - name: Install Wine + MT5
         run: |
-          # 1) i386 マルチアーキテクチャを有効化
           sudo dpkg --add-architecture i386
           sudo apt-get update -y
-
-          # 2) wine32 + 必要パッケージをインストール
           sudo apt-get install -y wine32 wine64 winbind xvfb wget unzip
-
-          # 3) MT5 本体をサイレントインストール
           wget -q https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe -O mt5setup.exe
           wine mt5setup.exe /silent /dir=C:\\mt5
 
       - name: Build Trinity
         run: |
           mkdir -p build
-          wine 'C:\mt5\metaeditor64.exe' \
-            /compile:src/trinity1.0.3.mq5 \
-            /log:build/compile.log \
-            /portable /quiet
+          xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" \
+            wine 'C:\mt5\metaeditor64.exe' \
+              /compile:src/trinity1.0.3.mq5 \
+              /log:build/compile.log \
+              /portable /quiet
 
       - name: Prepare tester config
         run: |
           mkdir -p report
-          cat > ci-tester.ini << 'EOF'
+          cat > ci-tester.ini <<'EOF'
           [Tester]
           Expert=trinity1.0.3.ex5
           Symbol=USDJPY
@@ -55,7 +51,8 @@ jobs:
 
       - name: Run Strategy Tester
         run: |
-          wine 'C:\mt5\tester64.exe' /config:ci-tester.ini /portable
+          xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" \
+            wine 'C:\mt5\tester64.exe' /config:ci-tester.ini /portable
 
       - uses: actions/upload-artifact@v4
         with:
