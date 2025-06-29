@@ -411,15 +411,5 @@ void OnTick()
    CheckTargetEquity();
 }
 
-//──────────────── Row sync helper ───────────────────────────
-void SyncRowByPrice()
-{
-    double bid = SymbolInfoDouble(InpSymbol, SYMBOL_BID);
 
-    // ★ rowAnchor との差分で判定 ★
-    if(bid >= rowAnchor + GridSize - 1e-9)
-        StepRow(lastRow + 1, +1);   // 1 行上へ
-    else if(bid <= rowAnchor - GridSize + 1e-9)
-        StepRow(lastRow - 1, -1);   // 1 行下へ
-}
 //+------------------------------------------------------------------+
