@@ -146,9 +146,9 @@ void FixTrendPair(int dir, int curRow)
 
     if(dir > 0)
     {
-        // 上昇トレンド：B→PROFIT, S→ALT
-        colTab[trendBCol].role       = ROLE_PROFIT;
-        colTab[trendSCol].role       = ROLE_ALT;
+          // 上昇トレンド：B→PROFIT, S→ALT
+    colTab[trendBCol].role = ROLE_PROFIT;  // ← 利確列を残す
+    colTab[trendSCol].role = ROLE_ALT;
         colTab[trendSCol].altRefRow  = curRow;
         colTab[trendSCol].altRefDir  = -colTab[trendSCol].lastDir;
         profit.active = false;
@@ -183,16 +183,10 @@ void SafeRollTrendPair(int curRow, int dir)
         if(!Parse(PositionGetString(POSITION_COMMENT), r, c)) continue;
         ulong tk = PositionGetTicket(i);
 
-        if(r == prevRow && c == trendBCol && trade.PositionClose(tk))
-        {
-            closedB = true;
-            colTab[c].posCnt--;
-        }
-        if(r == prevRow && c == trendSCol && trade.PositionClose(tk))
-        {
-            closedS = true;
-            colTab[c].posCnt--;
-        }
+        if(r == prevRow && c == trendBCol)             // 閉じない
+        closedB = true;
+        if(r == prevRow && c == trendSCol)             // 閉じない
+        closedS = true;
     }
     if(!(closedB && closedS))
     {
@@ -252,7 +246,7 @@ void CheckWeightedClose()
     for(uint c = 1; c < nextCol; c++)
     {
         // ALT 列かつ 3 本以上、かつ奇数本のみ対象
-        if(colTab[c].role != ROLE_ALT || colTab[c].posCnt < 3) continue;
+        if(colTab[c].role != ROLE_ALT) continue;  // posCnt 条件は外す
         if((colTab[c].posCnt & 1) == 0) continue;
 
         // ポジションを収集して合計損益を計算
