@@ -1,31 +1,72 @@
-# .github/workflows/ci.yml
-
-name: Build MQL5 EA
+name: MT5-CI          # 好きな名前で OK
 
 on:
   push:
     branches:
       - main
-      - feature/fix-cell-reuse
+      - feature/fix-cell-reuse   # ← 必要なブランチを列挙
   pull_request:
+  workflow_dispatch:             # 手動実行 (Actions 画面の “Run workflow”)
 
 jobs:
-  build:
-    runs-on: windows-latest    # Windows ランナー必須
+  test:
+    runs-on: windows-latest      # Windows ランナーを必ず指定
 
     steps:
-      # ① ソースを仮想マシンにコピー
-      - uses: actions/checkout@v4
+    # 1) リポジトリをチェックアウト
+    - uses: actions/checkout@v4
 
-      # ② MetaTrader 5 (MetaEditor) を Chocolatey 経由でインストール
-      - name: Install MetaTrader 5
-        run: choco install metatrader5 --yes
+    # 2) MT5 を公式サイトからダウンロード & サイレントインストール
+    - name: Install MetaTrader 5
+      shell: pwsh
+      run: |
+        $url  = 'https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe'
+        $dest = "$env:TEMP\mt5setup.exe"
+        Invoke-WebRequest $url -OutFile $dest
+        Start-Process -FilePath $dest -ArgumentList '/silent', '/dir=C:\MT5' -Wait
+        # MetaEditor が PATH に載っていないので、パスを環境変数に追加
+        echo "C:\MT5" | Out-File -FilePath $env:GITHUB_PATH -Append
 
-      # ③ EA をコンパイル
-      - name: Compile EA
-        run: |
-          # 実際のパスは環境に合わせて修正してください
-          "C:\Program Files\MetaTrader 5\metaeditor64.exe" \
-            /compile:"${{ github.workspace }}\src\trinity1.0.3.mq5" \
-            /log:"${{ github.workspace }}\build\compile.log" \
-            /portable /quiet
+    # 3) EA をコンパイル
+    - name: Compile Trinity
+      shell: cmd
+      run: |
+        mkdir build
+        "C:\MT5\metaeditor64.exe" ^
+          /compile:src\trinity1.0.3.mq5 ^
+          /log:build\compile.log ^
+          /portable /quiet
+
+    # 4) Strategy Tester 用 INI を作成
+    - name: Prepare tester config
+      shell: pwsh
+      run: |
+        $cfg = @"
+        [Tester]
+        Expert=trinity1.0.3.ex5
+        Symbol=USDJPY
+        Period=M1
+        FromDate=2023.01.02
+        ToDate=2025.06.27
+        Deposit=3000
+        Leverage=1:100
+        Report=report\Trinity.html
+        TestMode=0
+        Optimization=false
+        "@
+        New-Item -ItemType Directory -Path report -Force | Out-Null
+        $cfg | Out-File -Encoding ASCII ci-tester.ini
+
+    # 5) Strategy Tester を実行
+    - name: Run Strategy Tester
+      shell: cmd
+      run: |
+        "C:\MT5\tester64.exe" /config:ci-tester.ini /portable
+
+    # 6) レポート & コンパイルログを取得
+    - uses: actions/upload-artifact@v4
+      with:
+        name: mt5-report
+        path: |
+          report/*
+          build/compile.log
