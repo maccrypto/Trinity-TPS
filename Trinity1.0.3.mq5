@@ -194,7 +194,13 @@ void SafeRollTrendPair(int curRow, int dir)
             colTab[c].posCnt--;
         }
     }
-    if(!(closedB && closedS)) return;
+    if(!(closedB && closedS))
+    {
+        // 旧行にポジが残っていない場合は、そのまま新行へロール
+        Place((dir > 0 ? ORDER_TYPE_BUY  : ORDER_TYPE_SELL), trendBCol, curRow);
+        Place((dir > 0 ? ORDER_TYPE_SELL : ORDER_TYPE_BUY ), trendSCol, curRow);
+        return;
+    }
 
     // 新しい Row にロール
     Place((dir > 0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL),  trendBCol, curRow);
@@ -314,6 +320,10 @@ void CheckTargetEquity()
 //──────────────── Row step ──────────────────────────────────────
 void StepRow(int newRow,int dir)
 {
+   // === 行進ごとの内部状態更新 ===
+   lastRow   = newRow;
+   trendSign = dir;
+   rowAnchor = SymbolInfoDouble(InpSymbol, SYMBOL_BID);   // 任意（ログ用）
    bool pivot=(trendSign!=0 && dir!=trendSign);
    if(InpDbgLog) PrintFormat("StepRow newRow=%d dir=%d pivot=%s",newRow,dir,pivot?"YES":"NO");
 
@@ -361,12 +371,24 @@ int OnInit()
 
 void OnTick()
 {
-   double bid=SymbolInfoDouble(InpSymbol,SYMBOL_BID);
-   while(bid>=rowAnchor+GridSize-1e-9) StepRow(++lastRow,+1);
-   while(bid<=rowAnchor-GridSize+1e-9) StepRow(--lastRow,-1);
+   SyncRowByPrice();          // ← 置き換え;
 
    CheckProfitClose();
    CheckWeightedClose();
    CheckTargetEquity();
 }
+
+//──────────────── Row sync helper ───────────────────────────────
+void SyncRowByPrice()
+{
+    double bid = SymbolInfoDouble(InpSymbol, SYMBOL_BID);
+    int targetRow = (int)MathFloor((bid - basePrice + 1e-9) / GridSize);
+
+    // 1 tick で ±1 行だけ進める
+    if(targetRow > lastRow)
+        StepRow(lastRow + 1, +1);
+    else if(targetRow < lastRow)
+        StepRow(lastRow - 1, -1);
+}
+
 //+------------------------------------------------------------------+
