@@ -1,24 +1,53 @@
-//──────────────── Duplicate guard ───────────────────────────────
-// 同一セル（col,row）に既存ポジションがあるかをチェック
-bool HasPos(int col, int row)
-{
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(!PositionSelectByTicket(ticket))
-         continue;
+name: MT5-CI
 
-      // 1) Magic (列) は整数プロパティとして取得
-      long magic = PositionGetInteger(POSITION_MAGIC);
-      int pCol = (int)magic;
+on:
+  push:
+    branches: [ main ]
+  pull_request:
 
-      // 2) Comment (行) は文字列プロパティとして取得し、整数に変換
-      string comment = PositionGetString(POSITION_COMMENT);
-      int pRow = StringToInteger(comment);
+jobs:
+  test:
+    runs-on: ubuntu-latest          # Linux ランナー
+    env:
+      TERM: xterm-256color          # Wine の警告抑制
+    steps:
+    # ① ソース取得
+    - uses: actions/checkout@v4
 
-      if(pCol == col && pRow == row)
-         return true;  // 既使用セル
-   }
-   return false;  // 空セル
-}
-　
+    # ② Wine & 依存パッケージ
+    - name: Install Wine
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wine winbind xvfb wget unzip
+
+    # ③ MetaTrader 本体をダウンロード（公式配布 EXE）
+    - name: Download MT5
+      run: |
+        wget -q https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe -O mt5setup.exe
+        wine mt5setup.exe /silent /dir=C:\\mt5      # C:\mt5 にポータブル展開
+
+    # ④ EA をビルド
+    - name: Build Trinity
+      run: |
+        wine 'C:\mt5\metaeditor64.exe' \
+          /compile:src/trinity1.0.3.mq5 \
+          /log:build/compile.log \
+          /portable \
+          /quiet
+      continue-on-error: false
+
+    # ⑤ 単純バックテスト（例：USDJPY M1 2023-01-02〜）
+    - name: Run tester
+      run: |
+        mkdir -p report
+        wine 'C:\mt5\tester64.exe' \
+          /config:ci-tester.ini \
+          /portable
+
+    # ⑥ レポート & ログを成果物に
+    - uses: actions/upload-artifact@v4
+      with:
+        name: mt5-report
+        path: |
+          report/*
+          build/compile.log
