@@ -7,26 +7,22 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest          # Linux ランナー
+    runs-on: ubuntu-latest
     env:
-      TERM: xterm-256color          # Wine の警告抑制
+      TERM: xterm-256color      # Wine の warning 抑制
     steps:
-    # ① ソース取得
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v4   # リポジトリを取得
 
-    # ② Wine & 依存パッケージ
     - name: Install Wine
       run: |
-        sudo apt-get update
+        sudo apt-get update -y
         sudo apt-get install -y wine winbind xvfb wget unzip
 
-    # ③ MetaTrader 本体をダウンロード（公式配布 EXE）
     - name: Download MT5
       run: |
         wget -q https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe -O mt5setup.exe
-        wine mt5setup.exe /silent /dir=C:\\mt5      # C:\mt5 にポータブル展開
+        wine mt5setup.exe /silent /dir=C:\\mt5
 
-    # ④ EA をビルド
     - name: Build Trinity
       run: |
         wine 'C:\mt5\metaeditor64.exe' \
@@ -34,17 +30,30 @@ jobs:
           /log:build/compile.log \
           /portable \
           /quiet
-      continue-on-error: false
 
-    # ⑤ 単純バックテスト（例：USDJPY M1 2023-01-02〜）
-    - name: Run tester
+    - name: Prepare tester config
+      run: |
+        cat > ci-tester.ini <<'EOF'
+        [Tester]
+        Expert=trinity1.0.3.ex5
+        ExpertParameters=
+        Symbol=USDJPY
+        Period=M1
+        FromDate=2023.01.02
+        ToDate=2025.06.27
+        Deposit=3000
+        Leverage=1:100
+        Report=report/Trinity.html
+        TestMode=0
+        ForwardMode=0
+        Optimization=false
+        EOF
+
+    - name: Run Strategy Tester
       run: |
         mkdir -p report
-        wine 'C:\mt5\tester64.exe' \
-          /config:ci-tester.ini \
-          /portable
+        wine 'C:\mt5\tester64.exe' /config:ci-tester.ini /portable
 
-    # ⑥ レポート & ログを成果物に
     - uses: actions/upload-artifact@v4
       with:
         name: mt5-report
