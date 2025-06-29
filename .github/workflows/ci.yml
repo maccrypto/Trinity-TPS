@@ -21,3 +21,4 @@ bool HasPos(int col, int row)
    }
    return false;  // 空セル
 }
+　
