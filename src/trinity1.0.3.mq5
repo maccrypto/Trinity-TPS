@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //|  Trinity.mq5  –  Generic GridTPS Entry Core                      |
-//|  rev‑T1.0.3   (2025‑06‑07)                                       |
+//|  rev‑T1.0.4   (2025‑6-29)                                       |
 //+------------------------------------------------------------------+
 #property strict
 #include <Trade/Trade.mqh>
@@ -55,9 +55,10 @@ string Cmnt(int r,uint c){ return "r"+IntegerToString(r)+"C"+IntegerToString(c);
 
 bool Parse(const string &cm,int &r,uint &c)
 {
-   int p=StringFind(cm,"C"); if(p<2) return false;
-   r=(int)StringToInteger(StringSubstr(cm,1,p-1));
-   c=(uint)StringToInteger(StringSubstr(cm,p+1));
+   int p = StringFind(cm,"C");
+   if(p < 1) return false;
+   r = StringToInteger(StringSubstr(cm,1,p-1));   // 'r' の次から 'C' の直前
+   c = (uint)StringToInteger(StringSubstr(cm,p+1));
    return true;
 }
 
@@ -68,44 +69,57 @@ bool SelectPosByIndex(int index)
            PositionGetInteger(POSITION_MAGIC)==InpMagic);
 }
 
-//──────────────── Duplicate guard ───────────────────────────────
+// Duplicate-guard : Parse() をそのまま使う
 bool HasPos(uint col,int row)
 {
-   for(int i=PositionsTotal()-1;i>=0;i--)
+   for(int i = PositionsTotal()-1; i >= 0; i--)
    {
       if(!SelectPosByIndex(i)) continue;
-      int r; uint c; if(!Parse(PositionGetString(POSITION_COMMENT),r,c)) continue;
-      if(r==row && c==col) return true;
+      int r; uint c;
+      if(!Parse(PositionGetString(POSITION_COMMENT), r, c)) continue;
+      if(r == row && c == col) return true;
    }
    return false;
 }
-
 //──────────────── Market order helper ────────────────────────────
-bool Place(ENUM_ORDER_TYPE t,uint col,int row,bool isAltFirst=false)
+bool Place(ENUM_ORDER_TYPE t, uint col, int row, bool isAltFirst = false)
 {
-   if(HasPos(col,row)) return false;
+   // 同一セルに既存ポジションがあれば発注せず終了
+   if(HasPos(col, row))
+      return false;
 
-   double price=(t==ORDER_TYPE_BUY)? SymbolInfoDouble(InpSymbol,SYMBOL_ASK)
-                                  : SymbolInfoDouble(InpSymbol,SYMBOL_BID);
-   bool ok=(t==ORDER_TYPE_BUY)
-            ? trade.Buy (InpLot,InpSymbol,price,0,0,Cmnt(row,col))
-            : trade.Sell(InpLot,InpSymbol,price,0,0,Cmnt(row,col));
+   // 注文価格を決定
+   double price = (t == ORDER_TYPE_BUY)
+                  ? SymbolInfoDouble(InpSymbol, SYMBOL_ASK)
+                  : SymbolInfoDouble(InpSymbol, SYMBOL_BID);
+
+   // 発注実行
+   bool ok;
+   if(t == ORDER_TYPE_BUY)
+      ok = trade.Buy(InpLot, InpSymbol, price, 0, 0, Cmnt(row, col));
+   else
+      ok = trade.Sell(InpLot, InpSymbol, price, 0, 0, Cmnt(row, col));
+
+   // 発注成功時の後処理
    if(ok)
    {
       colTab[col].posCnt++;
-      colTab[col].lastDir=(t==ORDER_TYPE_BUY?+1:-1);
-      if(isAltFirst)
-      {
-         colTab[col].altRefRow=row;
-         colTab[col].altRefDir=-colTab[col].lastDir;
-      }
+      colTab[col].lastDir = (t == ORDER_TYPE_BUY ? +1 : -1);
+      if(isAltFirst)               // 初回は “いま建った玉” の向きを保存
+       {
+           colTab[col].altRefRow = row;
+           colTab[col].altRefDir =  colTab[col].lastDir;  // ← そのまま記憶
+       }
       if(InpDbgLog)
          PrintFormat("[NEW] r=%d c=%u role=%d dir=%s ALTfirst=%d posCnt=%u",
-                     row,col,colTab[col].role,(t==ORDER_TYPE_BUY?"Buy":"Sell"),
-                     isAltFirst,colTab[col].posCnt);
+                     row, col, colTab[col].role,
+                     (t == ORDER_TYPE_BUY ? "Buy" : "Sell"),
+                     isAltFirst, colTab[col].posCnt);
    }
+
    return ok;
 }
+
 
 //──────────────── Forward decls ─────────────────────────────────
 void SafeRollTrendPair(int curRow,int dir);
@@ -130,16 +144,16 @@ void FixTrendPair(int dir,int curRow)
    {
       colTab[trendBCol].role=ROLE_PROFIT;
       colTab[trendSCol].role=ROLE_ALT;
-      colTab[trendSCol].altRefRow=curRow;
-      colTab[trendSCol].altRefDir=-colTab[trendSCol].lastDir;
+      colTab[trendSCol].altRefRow = curRow;
+      colTab[trendSCol].altRefDir = -colTab[trendSCol].lastDir;   // ★必ず反転して保存
       profit.active=false;
    }
    else
    {
       colTab[trendSCol].role=ROLE_PROFIT;
       colTab[trendBCol].role=ROLE_ALT;
-      colTab[trendBCol].altRefRow=curRow;
-      colTab[trendBCol].altRefDir=-colTab[trendBCol].lastDir;
+      colTab[trendBCol].altRefRow = curRow;
+      colTab[trendBCol].altRefDir =  colTab[trendBCol].lastDir;   // ★下方向は反転しない
       profit.active=true; profit.col=trendSCol; profit.refRow=curRow;
    }
    trendBCol=trendSCol=0;
@@ -200,35 +214,47 @@ void CheckProfitClose()
    profit.active=false;
    Place(ORDER_TYPE_SELL,1,profit.refRow-1,true);
 }
-
-//──────────────── Weighted‑Close (±0) ───────────────────────────
+//──────────────── Weighted-Close (合計損益 ±0) ──────────────
 void CheckWeightedClose()
 {
-   double bid=SymbolInfoDouble(InpSymbol,SYMBOL_BID);
+    /* --------- 動的に“ほぼゼロ”幅を決定 --------- */
+   double tickVal   = SymbolInfoDouble(InpSymbol,SYMBOL_TRADE_TICK_VALUE);
+   double epsProfit = tickVal * InpLot * 0.5;     // 口座通貨 0.5pip 相当
 
-   for(uint c=1;c<nextCol;c++)
+   for(uint c = 1; c < nextCol; c++)
    {
-      if(colTab[c].role!=ROLE_ALT || colTab[c].posCnt==0) continue;
+      if(colTab[c].role != ROLE_ALT || colTab[c].posCnt < 3)   continue;
+      if((colTab[c].posCnt & 1)==0)                            continue; // 偶数は対象外
+        
+         continue;
 
-      double sumDir=0,sumDirOpen=0; ulong tks[128]; int n=0;
-      for(int i=PositionsTotal()-1;i>=0;i--)
+      double sumProfit = 0.0;
+      ulong  tks[128]; int n = 0;
+
+      for(int i = PositionsTotal()-1; i >= 0; i--)
       {
          if(!SelectPosByIndex(i)) continue;
-         int r; uint col; if(!Parse(PositionGetString(POSITION_COMMENT),r,col)) continue;
-         if(col!=c) continue;
-         int dir=(PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY)? +1:-1;
-         double op=PositionGetDouble(POSITION_PRICE_OPEN);
-         sumDir+=dir; sumDirOpen+=dir*op; tks[n++]=PositionGetTicket(i);
+         int r; uint col;
+         if(!Parse(PositionGetString(POSITION_COMMENT), r, col) || col != c) continue;
+
+         tks[n++]   = PositionGetTicket(i);
+         sumProfit += PositionGetDouble(POSITION_PROFIT);   // ←リアルタイム損益
       }
-      if(n==0 || MathAbs(sumDir)<1e-9) continue;
+      if(n == 0) continue;
 
-      double be=sumDirOpen/sumDir;
-      bool hit=(sumDir>0)? (bid<=be+1e-9):(bid>=be-1e-9);
-      if(!hit) continue;
+      if(MathAbs(sumProfit) <= epsProfit)
+      {
+         uint closed = 0;
+         for(int k = 0; k < n; k++)
+            if(trade.PositionClose(tks[k])) { closed++; colTab[c].posCnt--; }
 
-      uint closed=0; for(int k=0;k<n;k++) if(trade.PositionClose(tks[k])) { closed++; colTab[c].posCnt--; }
-      altClosedRow[c]=lastRow; if(colTab[c].posCnt==0) colTab[c].role=ROLE_PENDING;
-      if(InpDbgLog) PrintFormat("WeightedClose HIT col=%u BE=%.5f bid=%.5f closed=%u",c,be,bid,closed);
+         altClosedRow[c] = lastRow - 1;   // ★次の StepRow で再エントリー可
+         if(colTab[c].posCnt == 0) colTab[c].role = ROLE_PENDING;
+
+         if(InpDbgLog)
+            PrintFormat("WeightedClose ZERO col=%u  P/L=%.2f  closed=%u",
+                        c, sumProfit, closed);
+      }
    }
 }
 
