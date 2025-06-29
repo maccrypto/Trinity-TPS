@@ -6,7 +6,68 @@ on:
   pull_request:
 
 jobs:
+  testname: MT5-CI          # ← ワークフロー名は好きな文字列に変更可
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
   test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4   # リポジトリを取得
+
+    # -------------- 依存ツールを入れる ------------------
+    - name: Install Wine + MT5
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y wine winbind xvfb wget unzip
+        wget -q https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe -O mt5setup.exe
+        wine mt5setup.exe /silent /dir=C:\\mt5
+
+    # -------------- コンパイル --------------------------
+    - name: Build Trinity
+      run: |
+        mkdir -p build
+        wine 'C:\mt5\metaeditor64.exe' \
+          /compile:src/trinity1.0.3.mq5 \
+          /log:build/compile.log \
+          /portable /quiet
+
+    # -------------- テスト設定 --------------------------
+    - name: Prepare tester config
+      run: |
+        cat > ci-tester.ini <<'EOF'
+        [Tester]
+        Expert=trinity1.0.3.ex5
+        Symbol=USDJPY
+        Period=M1
+        FromDate=2023.01.02
+        ToDate=2025.06.27
+        Deposit=3000
+        Leverage=1:100
+        Report=report/Trinity.html
+        TestMode=0
+        Optimization=false
+        EOF
+
+    # -------------- Strategy Tester 実行 --------------
+    - name: Run Strategy Tester
+      run: |
+        mkdir -p report
+        wine 'C:\mt5\tester64.exe' /config:ci-tester.ini /portable
+
+    # -------------- 成果物を保存 -----------------------
+    - uses: actions/upload-artifact@v4
+      with:
+        name: mt5-report
+        path: |
+          report/*
+          build/compile.log
+
     runs-on: ubuntu-latest
     env:
       TERM: xterm-256color      # Wine の warning 抑制
