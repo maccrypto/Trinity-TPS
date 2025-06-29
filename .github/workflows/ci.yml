@@ -15,13 +15,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Wine + MT5
+      - name: Install Wine, Winetricks & MT5
         run: |
+          # 1) マルチアーキテクチャ設定
           sudo dpkg --add-architecture i386
           sudo apt-get update -y
-          sudo apt-get install -y wine32 wine64 winbind xvfb wget unzip
+
+          # 2) Wine 本体 と winetricks をインストール
+          sudo apt-get install -y wine32 wine64 winbind xvfb wget unzip cabextract
+          wget -qO winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
+          chmod +x winetricks
+          sudo mv winetricks /usr/local/bin/
+
+          # 3) Wine 環境に MSVC ランタイム等を導入
+          WINEPREFIX="$HOME/.wine" winetricks -q vcrun2015 vcrun2017 vcrun2019 corefonts
+
+          # 4) MT5 をサイレントインストール
           wget -q https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe -O mt5setup.exe
-          wine mt5setup.exe /silent /dir=C:\\mt5
+          xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" wine mt5setup.exe /silent /dir=C:\\mt5
 
       - name: Build Trinity
         run: |
