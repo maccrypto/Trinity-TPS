@@ -2,7 +2,8 @@ name: MT5-CI
 
 on:
   push:
-    branches: [ main ]
+    branches: - main
+      -"feature/fix-cell-reuse"
   pull_request:
 
 jobs:
