@@ -1,4 +1,4 @@
-name: MT5-CI                # ← 好きな名前に変えて OK
+name: MT5-CI
 
 on:
   push:
@@ -6,13 +6,13 @@ on:
   pull_request:
 
 jobs:
-  test:                     # ← job ID。1 個なら何でも OK
+  test:                     # ← ジョブ名は何でもOK、スペースも入れない
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4   # リポジトリを取得
 
-    # ---------- Wine と MT5 を入れる ----------
+    # ---------- Wine と MT5 をインストール ----------
     - name: Install Wine + MT5
       run: |
         sudo apt-get update -y
@@ -20,7 +20,7 @@ jobs:
         wget -q https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe -O mt5setup.exe
         wine mt5setup.exe /silent /dir=C:\\mt5
 
-    # ---------- コンパイル ----------
+    # ---------- Trinity をコンパイル ----------
     - name: Build Trinity
       run: |
         mkdir -p build
@@ -29,9 +29,10 @@ jobs:
           /log:build/compile.log \
           /portable /quiet
 
-    # ---------- テスター設定 ----------
+    # ---------- テスター用設定ファイルを作成 ----------
     - name: Prepare tester config
       run: |
+        mkdir -p report
         cat > ci-tester.ini <<'EOF'
         [Tester]
         Expert=trinity1.0.3.ex5
@@ -46,13 +47,12 @@ jobs:
         Optimization=false
         EOF
 
-    # ---------- Strategy Tester 実行 ----------
+    # ---------- Strategy Tester を実行 ----------
     - name: Run Strategy Tester
       run: |
-        mkdir -p report
         wine 'C:\mt5\tester64.exe' /config:ci-tester.ini /portable
 
-    # ---------- レポート保存 ----------
+    # ---------- レポートをアップロード ----------
     - uses: actions/upload-artifact@v4
       with:
         name: mt5-report
