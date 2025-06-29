@@ -40,15 +40,24 @@ jobs:
           # MT5 パスを後続ステップへ渡す
           "C:\MT5" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
 
-      # 3) EA をコンパイル
-      - name: Compile Trinity EA
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path build -Force | Out-Null
-          & 'C:\MT5\metaeditor64.exe' `
-              /compile:src\trinity1.0.3.mq5 `
-              /log:build\compile.log `
-              /portable /quiet
+     # ③ EA をコンパイル  ←★ここを書き直し
+- name: Compile Trinity EA
+  shell: pwsh
+  run: |
+    # MetaEditor を検索（最初に見つかった 1 本を使用）
+    $editor = Get-ChildItem -Path 'C:\MT5' -Recurse -Include 'metaeditor64.exe','metaeditor.exe' -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+    if (-not $editor) {
+      Throw "MetaEditor not found under C:\MT5"
+    }
+    Write-Host ">> MetaEditor found at $($editor.FullName)"
+
+    New-Item -ItemType Directory -Path build -Force | Out-Null
+    & $editor.FullName `
+        /compile:src\trinity1.0.3.mq5 `
+        /log:build\compile.log `
+        /portable /quiet
+
 
       # 4) テスター設定ファイル作成
       - name: Prepare tester config
