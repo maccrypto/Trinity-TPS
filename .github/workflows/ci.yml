@@ -2,61 +2,58 @@ name: MT5-CI
 
 on:
   push:
-    branches: - main
-      -"feature/fix-cell-reuse"
+    branches:
+      - main
+      - feature/fix-cell-reuse  # ← ここに追加
   pull_request:
+  workflow_dispatch:           # 手動トリガ用
 
 jobs:
-  test:                     # ← ジョブ名は何でもOK、スペースも入れない
+  test:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4   # リポジトリを取得
+      - uses: actions/checkout@v4
 
-    # ---------- Wine と MT5 をインストール ----------
-    - name: Install Wine + MT5
-      run: |
-        sudo apt-get update -y
-        sudo apt-get install -y wine winbind xvfb wget unzip
-        wget -q https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe -O mt5setup.exe
-        wine mt5setup.exe /silent /dir=C:\\mt5
+      - name: Install Wine + MT5
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y wine winbind xvfb wget unzip
+          wget -q https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe -O mt5setup.exe
+          wine mt5setup.exe /silent /dir=C:\\mt5
 
-    # ---------- Trinity をコンパイル ----------
-    - name: Build Trinity
-      run: |
-        mkdir -p build
-        wine 'C:\mt5\metaeditor64.exe' \
-          /compile:src/trinity1.0.3.mq5 \
-          /log:build/compile.log \
-          /portable /quiet
+      - name: Build Trinity
+        run: |
+          mkdir -p build
+          wine 'C:\mt5\metaeditor64.exe' \
+            /compile:src/trinity1.0.3.mq5 \
+            /log:build/compile.log \
+            /portable /quiet
 
-    # ---------- テスター用設定ファイルを作成 ----------
-    - name: Prepare tester config
-      run: |
-        mkdir -p report
-        cat > ci-tester.ini <<'EOF'
-        [Tester]
-        Expert=trinity1.0.3.ex5
-        Symbol=USDJPY
-        Period=M1
-        FromDate=2023.01.02
-        ToDate=2025.06.27
-        Deposit=3000
-        Leverage=1:100
-        Report=report/Trinity.html
-        TestMode=0
-        Optimization=false
-        EOF
+      - name: Prepare tester config
+        run: |
+          mkdir -p report
+          cat > ci-tester.ini <<'EOF'
+          [Tester]
+          Expert=trinity1.0.3.ex5
+          Symbol=USDJPY
+          Period=M1
+          FromDate=2023.01.02
+          ToDate=2025.06.27
+          Deposit=3000
+          Leverage=1:100
+          Report=report/Trinity.html
+          TestMode=0
+          Optimization=false
+          EOF
 
-    # ---------- Strategy Tester を実行 ----------
-    - name: Run Strategy Tester
-      run: |
-        wine 'C:\mt5\tester64.exe' /config:ci-tester.ini /portable
+      - name: Run Strategy Tester
+        run: |
+          wine 'C:\mt5\tester64.exe' /config:ci-tester.ini /portable
 
-    # ---------- レポートをアップロード ----------
-    - uses: actions/upload-artifact@v4
-      with:
-        name: mt5-report
-        path: |
-          report/*
-          build/compile.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mt5-report
+          path: |
+            report/*
+            build/compile.log
