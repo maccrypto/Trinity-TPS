@@ -235,21 +235,20 @@ void CheckProfitClose()
 }
 //────────────────────────────────────────────────────────────────
 // CheckWeightedClose()
-// 動的な EPS 緩和（±5pip 相当）、余分な continue 削除、altClosedRow を現 row に
+// 合計損益が “完全ゼロ” の場合のみ全決済
 //────────────────────────────────────────────────────────────────
 void CheckWeightedClose()
 {
-    // 口座通貨あたり 1 tick value を取得し、5 pip 相当に緩和
-    double tickVal   = SymbolInfoDouble(InpSymbol, SYMBOL_TRADE_TICK_VALUE);
-    double epsProfit = tickVal * InpLot * 5.0;  // ±5 pip 相当
+
+    // 完全ゼロ判定のため、しきい値は 0 に固定
+    double epsProfit = 0.0;
 
     for(uint c = 1; c < nextCol; c++)
     {
-        // ALT 列かつ 3 本以上、かつ奇数本のみ対象
-        if(colTab[c].role != ROLE_ALT) continue;  // posCnt 条件は外す
+        if(colTab[c].role != ROLE_ALT) continue;
+        // 奇数本のみ対象
         if((colTab[c].posCnt & 1) == 0) continue;
 
-        // ポジションを収集して合計損益を計算
         double sumProfit = 0.0;
         ulong  tks[128];
         int    n = 0;
@@ -263,8 +262,8 @@ void CheckWeightedClose()
         }
         if(n == 0) continue;
 
-        // ±epsProfit 内なら全決済
-        if(MathAbs(sumProfit) <= epsProfit)
+        // 完全ゼロなら全決済
+        if(MathAbs(sumProfit) <= epsProfit /* == 0 */)
         {
             uint closed = 0;
             for(int k = 0; k < n; k++)
@@ -275,7 +274,6 @@ void CheckWeightedClose()
                     colTab[c].posCnt--;
                 }
             }
-            // 現行 row では再エントリー禁止
             altClosedRow[c] = lastRow;
             if(colTab[c].posCnt == 0) colTab[c].role = ROLE_PENDING;
             if(InpDbgLog)
@@ -314,23 +312,21 @@ void CheckTargetEquity()
 //──────────────── Row step ──────────────────────────────────────
 void StepRow(int newRow, int dir)
 {
-    // ❶ pivot 判定は “以前の trendSign” を使う
     bool pivot = (trendSign != 0 && dir != trendSign);
 
     if(InpDbgLog)
         PrintFormat("StepRow newRow=%d dir=%d pivot=%s",
                     newRow, dir, pivot ? "YES" : "NO");
 
-    // ❷ pivot ならトレンド確定＋新セット作成
-    if(pivot || trendSign == 0)
-    {
-        FixTrendPair(dir, newRow);   // 直前の TrendPair を Profit/Alt に確定
-        CreateTrendPair(newRow);     // 新しい TrendPair (次の Col) を生成
-    }
-    else
-    {
-        SafeRollTrendPair(newRow, dir); // 同一トレンド中：既存ペアを 1 行ロール
-    }
+       if(pivot || trendSign==0)
+   {
+       FixTrendPair(dir, newRow);
+       CreateTrendPair(newRow);
+   }
+   else
+   {
+       SafeRollTrendPair(newRow, dir);
+   }
 
     // ❸ PENDING → TREND への昇格チェック
     for(uint c = 1; c < nextCol; c++)
@@ -353,6 +349,18 @@ void UpdateAlternateCols(int curRow)
         if(colTab[c].role == ROLE_ALT && altClosedRow[c] != curRow)
             Place(AltDir(c, curRow), c, curRow);
     }
+}
+//────────────────────────────────────────────────────────────────
+// SyncRowByPrice()
+// 現在の BID から lastRow を再計算して返す
+//────────────────────────────────────────────────────────────────
+int SyncRowByPrice()
+{
+    double bid = SymbolInfoDouble(InpSymbol, SYMBOL_BID);
+    // basePrice は OnInit で初期化された「Row＝0 の基準価格」
+    double delta = bid - basePrice;
+    // GridSize ごとに丸めて行番号に変換
+    return (int)MathFloor((delta + GridSize*0.5) / GridSize);
 }
 
 //──────────────── OnInit / OnTick ───────────────────────────────
@@ -377,10 +385,25 @@ int OnInit()
    return INIT_SUCCEEDED;
 }
 
+
 void OnTick()
 {
-   SyncRowByPrice();          // ← 置き換え;
+   // ① 現在の行番号をシンキング
+   int newRow = SyncRowByPrice();
+   // ② 方向を決定
+   int dir = (newRow > lastRow ? +1 : (newRow < lastRow ? -1 : 0));
+   if(dir != 0)
+   {
+       // ③ 一行分だけステップ
+       StepRow(newRow, dir);
+       // ④ 行アンカーを再計算
+       rowAnchor = basePrice + newRow * GridSize;
+       // ⑤ trendSign を更新
+       trendSign = dir;
+       lastRow   = newRow;
+   }
 
+   // ⑥ ほかの機能
    CheckProfitClose();
    CheckWeightedClose();
    CheckTargetEquity();
