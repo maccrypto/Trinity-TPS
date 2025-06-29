@@ -318,22 +318,36 @@ void CheckTargetEquity()
 }
 
 //──────────────── Row step ──────────────────────────────────────
-void StepRow(int newRow,int dir)
+void StepRow(int newRow, int dir)
 {
-   // === 行進ごとの内部状態更新 ===
-   lastRow   = newRow;
-   trendSign = dir;
-   rowAnchor = SymbolInfoDouble(InpSymbol, SYMBOL_BID);   // 任意（ログ用）
-   bool pivot=(trendSign!=0 && dir!=trendSign);
-   if(InpDbgLog) PrintFormat("StepRow newRow=%d dir=%d pivot=%s",newRow,dir,pivot?"YES":"NO");
+    // ❶ pivot 判定は “以前の trendSign” を使う
+    bool pivot = (trendSign != 0 && dir != trendSign);
 
-   if(pivot || trendSign==0) { FixTrendPair(dir,newRow); CreateTrendPair(newRow); }
-   else                      { SafeRollTrendPair(newRow,dir); }
+    if(InpDbgLog)
+        PrintFormat("StepRow newRow=%d dir=%d pivot=%s",
+                    newRow, dir, pivot ? "YES" : "NO");
 
-   for(uint c=1;c<nextCol;c++)
-      if(colTab[c].role==ROLE_PENDING && colTab[c].posCnt==0)
-         colTab[c].role=ROLE_TREND;
+    // ❷ pivot ならトレンド確定＋新セット作成
+    if(pivot || trendSign == 0)
+    {
+        FixTrendPair(dir, newRow);   // 直前の TrendPair を Profit/Alt に確定
+        CreateTrendPair(newRow);     // 新しい TrendPair (次の Col) を生成
+    }
+    else
+    {
+        SafeRollTrendPair(newRow, dir); // 同一トレンド中：既存ペアを 1 行ロール
+    }
+
+    // ❸ PENDING → TREND への昇格チェック
+    for(uint c = 1; c < nextCol; c++)
+        if(colTab[c].role == ROLE_PENDING && colTab[c].posCnt == 0)
+            colTab[c].role = ROLE_TREND;
+
+    // ❹ 最後に行進の状態を更新
+    lastRow   = newRow;
+    trendSign = dir;
 }
+
 //────────────────────────────────────────────────────────────────
 // UpdateAlternateCols(int curRow)
 // altClosedRow[c] == curRow の場合のみ建て直しを抑止
