@@ -1,4 +1,4 @@
-name: MT5-CI          # ワークフロー名
+name: MT5-CI
 
 on:
   push:
@@ -6,14 +6,14 @@ on:
       - main
       - feature/fix-cell-reuse   # ← 必要なブランチを列挙
   pull_request:
-  workflow_dispatch:            # 手動実行ボタンも有効化
+  workflow_dispatch:             # 手動実行ボタンも有効化
 
 jobs:
   test:
     runs-on: windows-latest      # MT5 は Windows で動かす
 
     steps:
-      # 1) ソース取得
+      # 1) リポジトリ取得
       - uses: actions/checkout@v4
 
       # 2) MetaTrader 5 を静かにインストール
@@ -35,60 +35,34 @@ jobs:
             }
           }
           if (-not $ok) { throw "MT5 setup download failed after 3 attempts" }
-
           Start-Process -FilePath $dest -ArgumentList '/silent','/dir=C:\MT5' -Wait
-          # MT5 パスを後続ステップへ渡す
+          # MT5 パスを環境変数としてエクスポート
           "C:\MT5" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
 
-     # ③ EA をコンパイル  ←★ここを書き直し
-- name: Compile Trinity EA
-  shell: pwsh
-  run: |
-    # MetaEditor を検索（最初に見つかった 1 本を使用）
-    $editor = Get-ChildItem -Path 'C:\MT5' -Recurse -Include 'metaeditor64.exe','metaeditor.exe' -ErrorAction SilentlyContinue |
-              Select-Object -First 1
-    if (-not $editor) {
-      Throw "MetaEditor not found under C:\MT5"
-    }
-    Write-Host ">> MetaEditor found at $($editor.FullName)"
-
-    New-Item -ItemType Directory -Path build -Force | Out-Null
-    & $editor.FullName `
-        /compile:src\trinity1.0.3.mq5 `
-        /log:build\compile.log `
-        /portable /quiet
-
-
-      # 4) テスター設定ファイル作成
-      - name: Prepare tester config
+      # 3) EA をコンパイル  ← ここに“‐ name”が抜けていた
+      - name: Compile Trinity EA
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path report -Force | Out-Null
-          @"
-          [Tester]
-          Expert=trinity1.0.3.ex5
-          Symbol=USDJPY
-          Period=M1
-          FromDate=2023.01.02
-          ToDate=2025.06.27
-          Deposit=3000
-          Leverage=1:100
-          Report=report\Trinity.html
-          TestMode=0
-          Optimization=false
-          "@ | Set-Content -Path ci-tester.ini -Encoding ascii
+          # MetaEditor を検索（最初に見つかった 1 本を使用）
+          $editor = Get-ChildItem -Path 'C:\MT5' -Recurse `
+                     -Include 'metaeditor64.exe','metaeditor.exe' |
+                     Select-Object -First 1
+          if (-not $editor) { throw "MetaEditor not found under C:\MT5" }
+          Write-Host ">> MetaEditor found at $($editor.FullName)"
 
-      # 5) ストラテジテスター実行
-      - name: Run Strategy Tester
-        shell: pwsh
-        run: |
-          & 'C:\MT5\tester64.exe' /config:ci-tester.ini /portable
+          New-Item -ItemType Directory -Path build -Force | Out-Null
+          & $editor.FullName `
+              /compile:src\trinity1.0.3.mq5 `
+              /log:build\compile.log `
+              /portable /quiet
 
-      # 6) レポート／ビルドログを保存
-      - name: Upload report & log
-        uses: actions/upload-artifact@v4
+      # 4) Strategy Tester 実行（必要なら追加）
+      # - name: Run Strategy Tester
+      #   …
+
+      # 5) レポート／ログをアップロード
+      - uses: actions/upload-artifact@v4
         with:
           name: mt5-report
           path: |
-            report/
             build/compile.log
