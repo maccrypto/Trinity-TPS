@@ -55,9 +55,11 @@ string Cmnt(int r,uint c){ return "r"+IntegerToString(r)+"C"+IntegerToString(c);
 
 bool Parse(const string &cm,int &r,uint &c)
 {
-   int p = StringFind(cm,"C");
+   // StringFind の戻り値は long なので long で受ける
+   long p = StringFind(cm,"C");
    if(p < 1) return false;
-   r = StringToInteger(StringSubstr(cm,1,p-1));   // 'r' の次から 'C' の直前
+   // 'r' の次から 'C' の直前までを整数化
+   r = (int)StringToInteger(StringSubstr(cm,1,(int)p-1));
    c = (uint)StringToInteger(StringSubstr(cm,p+1));
    return true;
 }
@@ -352,15 +354,15 @@ void UpdateAlternateCols(int curRow)
 }
 //────────────────────────────────────────────────────────────────
 // SyncRowByPrice()
-// 現在の BID から lastRow を再計算して返す
+//   basePrice からの乖離を GridSize 刻みで丸めて「行番号」を返す
 //────────────────────────────────────────────────────────────────
 int SyncRowByPrice()
 {
-    double bid = SymbolInfoDouble(InpSymbol, SYMBOL_BID);
-    // basePrice は OnInit で初期化された「Row＝0 の基準価格」
+    // 現在の Bid と基準価格の差分を取得
+    double bid   = SymbolInfoDouble(InpSymbol, SYMBOL_BID);
     double delta = bid - basePrice;
-    // GridSize ごとに丸めて行番号に変換
-    return (int)MathFloor((delta + GridSize*0.5) / GridSize);
+    // 0.5グリッド分をシフトして丸め、行番号として返す
+    return (int)MathFloor((delta + GridSize * 0.5) / GridSize);
 }
 
 //──────────────── OnInit / OnTick ───────────────────────────────
