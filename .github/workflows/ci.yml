@@ -1,7 +1,7 @@
-name: Build MQL5 EA   # ワークフロー名（自由に変えてOK）
+name: Build MQL5 EA   # ワークフロー名（自由に変えてOK）nano .github/workflows/ci.yml
 
 # いつ動かすか
-on:
+nano .github/workflows/ci.ymlnano .github/workflows/ci.ymlnano .github/workflows/ci.ymlnano .github/workflows/ci.ymlnano .github/workflows/ci.ymlon:
   push:               # push 時
     branches: [ main, develop ]
   pull_request:       # PR 作成 / 更新 時
