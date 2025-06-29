@@ -3,22 +3,10 @@ name: MT5-CI
 on:
   push:
     branches:
-      - mai      - name: Install Wine + MT5
-        run: |
-          # 1) マルチアーキテクチャ（i386）の追加
-          sudo dpkg --add-architecture i386
-          sudo apt-get update -y
-
-          # 2) wine32 と必要パッケージのインストール
-          sudo apt-get install -y wine32 wine64 winbind xvfb wget unzip
-
-          # 3) MT5 本体をサイレントインストール
-          wget -q https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe -O mt5setup.exe
-          wine mt5setup.exe /silent /dir=C:\\mt5
-
-      - feature/fix-cell-reuse  # ← ここに追加
+      - main
+      - feature/fix-cell-reuse    # ← ここに追加したいブランチを列挙
   pull_request:
-  workflow_dispatch:           # 手動トリガ用
+  workflow_dispatch:            # 手動トリガー用
 
 jobs:
   test:
@@ -29,8 +17,14 @@ jobs:
 
       - name: Install Wine + MT5
         run: |
+          # 1) i386 マルチアーキテクチャを有効化
+          sudo dpkg --add-architecture i386
           sudo apt-get update -y
-          sudo apt-get install -y wine winbind xvfb wget unzip
+
+          # 2) wine32 + 必要パッケージをインストール
+          sudo apt-get install -y wine32 wine64 winbind xvfb wget unzip
+
+          # 3) MT5 本体をサイレントインストール
           wget -q https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe -O mt5setup.exe
           wine mt5setup.exe /silent /dir=C:\\mt5
 
@@ -45,7 +39,7 @@ jobs:
       - name: Prepare tester config
         run: |
           mkdir -p report
-          cat > ci-tester.ini <<'EOF'
+          cat > ci-tester.ini << 'EOF'
           [Tester]
           Expert=trinity1.0.3.ex5
           Symbol=USDJPY
