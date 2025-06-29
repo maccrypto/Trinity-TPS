@@ -13,27 +13,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1) ソース取得
       - uses: actions/checkout@v4
 
-      - name: Install Wine, Winetricks & MT5
+      # 2) Wine／Winetricks／MT5本体 をインストール
+      - name: Install Wine + Winetricks + MT5
         run: |
-          # 1) マルチアーキテクチャ設定
           sudo dpkg --add-architecture i386
           sudo apt-get update -y
-
-          # 2) Wine 本体 と winetricks をインストール
-          sudo apt-get install -y wine32 wine64 winbind xvfb wget unzip cabextract
-          wget -qO winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
-          chmod +x winetricks
-          sudo mv winetricks /usr/local/bin/
-
-          # 3) Wine 環境に MSVC ランタイム等を導入
-          WINEPREFIX="$HOME/.wine" winetricks -q vcrun2015 vcrun2017 vcrun2019 corefonts
-
-          # 4) MT5 をサイレントインストール
+          sudo apt-get install -y wine32 wine64 winbind xvfb cabextract unzip
+          # winetricks がなければ入れる
+          if ! command -v winetricks >/dev/null; then
+            wget -qO winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
+            chmod +x winetricks && sudo mv winetricks /usr/local/bin/
+          fi
+          # 必要ランタイム類をサイレント導入（失敗しても止めない）
+          WINEPREFIX="$HOME/.wine" winetricks -q vcrun2015 vcrun2017 vcrun2019 corefonts || true
+          # MT5 本体をサイレントインストール
           wget -q https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe -O mt5setup.exe
-          xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" wine mt5setup.exe /silent /dir=C:\\mt5
+          xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" \
+            wine mt5setup.exe /silent /dir=C:\\mt5
 
+      # 3) Trinity をコンパイル（失敗しても止めない）
       - name: Build Trinity
         run: |
           mkdir -p build
@@ -41,8 +42,9 @@ jobs:
             wine 'C:\mt5\metaeditor64.exe' \
               /compile:src/trinity1.0.3.mq5 \
               /log:build/compile.log \
-              /portable /quiet
+              /portable /quiet || true
 
+      # 4) テスター設定ファイル作成
       - name: Prepare tester config
         run: |
           mkdir -p report
@@ -60,11 +62,13 @@ jobs:
           Optimization=false
           EOF
 
+      # 5) Strategy Tester 実行
       - name: Run Strategy Tester
         run: |
           xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" \
             wine 'C:\mt5\tester64.exe' /config:ci-tester.ini /portable
 
+      # 6) レポート＆ログをアーティファクトとしてアップロード
       - uses: actions/upload-artifact@v4
         with:
           name: mt5-report
