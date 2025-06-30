@@ -140,70 +140,69 @@ void CreateTrendPair(int row)
 
 //────────────────────────────────────────────────────────────────
 // FixTrendPair(int dir, int curRow)
-// 上昇・下降ともに altRefDir = -lastDir で統一
+//   トレンドペアを利確列／ALT列へ振り分け、profitトリガーをセット
 //────────────────────────────────────────────────────────────────
 void FixTrendPair(int dir, int curRow)
 {
-    if(trendBCol == 0 || trendSCol == 0) return;
+   if(trendBCol == 0 || trendSCol == 0) return;
 
-    if(dir > 0)
-    {
-          // 上昇トレンド：B→PROFIT, S→ALT
-    colTab[trendBCol].role = ROLE_PROFIT;  // ← 利確列を残す
-    colTab[trendSCol].role = ROLE_ALT;
-        colTab[trendSCol].altRefRow  = curRow;
-        colTab[trendSCol].altRefDir  = -colTab[trendSCol].lastDir;
-        profit.active = false;
-    }
-    else
-    {
-        // 下降トレンド：S→PROFIT, B→ALT
-        colTab[trendSCol].role       = ROLE_PROFIT;
-        colTab[trendBCol].role       = ROLE_ALT;
-        colTab[trendBCol].altRefRow  = curRow;
-        colTab[trendBCol].altRefDir  = -colTab[trendBCol].lastDir;  // 反転で統一
-        profit.active = true;
-        profit.col    = trendSCol;
-        profit.refRow = curRow;
-    }
-    trendBCol = trendSCol = 0;
+   if(dir > 0)
+   {
+      // 上昇トレンド：B→PROFIT, S→ALT
+      colTab[trendBCol].role      = ROLE_PROFIT;
+      profit.active              = true;
+      profit.col                 = trendBCol;
+      profit.refRow              = curRow;
+      colTab[trendSCol].role     = ROLE_ALT;
+      colTab[trendSCol].altRefRow= curRow;
+      colTab[trendSCol].altRefDir= -colTab[trendSCol].lastDir;
+   }
+   else
+   {
+      // 下降トレンド：S→PROFIT, B→ALT
+      colTab[trendSCol].role      = ROLE_PROFIT;
+      profit.active              = true;
+      profit.col                 = trendSCol;
+      profit.refRow              = curRow;
+      colTab[trendBCol].role     = ROLE_ALT;
+      colTab[trendBCol].altRefRow= curRow;
+      colTab[trendBCol].altRefDir= -colTab[trendBCol].lastDir;
+   }
+
+   trendBCol = trendSCol = 0;
 }
-
 //────────────────────────────────────────────────────────────────
 // SafeRollTrendPair(int curRow, int dir)
-// 前方宣言を削除し、実装だけを残す
+//   ❶ 旧 Row の TrendPair（B/S）を必ず閉じる
+//   ❷ 新しい Row に Buy／Sell を固定で建て直す
+//      ＊Place() 内で Duplicate-Guard が働くので多重発注にはならない
 //────────────────────────────────────────────────────────────────
 void SafeRollTrendPair(int curRow, int dir)
 {
-    int prevRow = curRow - dir;
-    bool closedB = false, closedS = false;
+   int prevRow = curRow - dir;
 
-    for(int i = PositionsTotal() - 1; i >= 0; i--)
-    {
-        if(!SelectPosByIndex(i)) continue;
-        int r; uint c;
-        if(!Parse(PositionGetString(POSITION_COMMENT), r, c)) continue;
-        ulong tk = PositionGetTicket(i);
+   // ── ❶ 旧 Row に残っている TrendPair をクローズ ──
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      if(!SelectPosByIndex(i)) continue;
 
-        if(r == prevRow && c == trendBCol)             // 閉じない
-        closedB = true;
-        if(r == prevRow && c == trendSCol)             // 閉じない
-        closedS = true;
-    }
-    if(!(closedB && closedS))
-    {
-        // 旧行にポジが残っていない場合は、そのまま新行へロール
-        Place((dir > 0 ? ORDER_TYPE_BUY  : ORDER_TYPE_SELL), trendBCol, curRow);
-        Place((dir > 0 ? ORDER_TYPE_SELL : ORDER_TYPE_BUY ), trendSCol, curRow);
-        return;
-    }
+      int  r;   uint c;
+      if(!Parse(PositionGetString(POSITION_COMMENT), r, c)) continue;
 
-    // 新しい Row にロール
-    Place((dir > 0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL),  trendBCol, curRow);
-    Place((dir > 0 ? ORDER_TYPE_SELL : ORDER_TYPE_BUY), trendSCol, curRow);
+      if(r == prevRow && (c == trendBCol || c == trendSCol))
+      {
+         ulong tk = PositionGetTicket(i);
+         if(trade.PositionClose(tk))
+            colTab[c].posCnt--;
+      }
+   }
 
-    if(InpDbgLog)
-        PrintFormat("SafeRollTrendPair rolled to Row %d", curRow);
+   // ── ❷ 新 Row に必ず建てる（既に有れば Place が無視） ──
+   Place(ORDER_TYPE_BUY , trendBCol, curRow);   // Buy 固定
+   Place(ORDER_TYPE_SELL, trendSCol, curRow);   // Sell 固定
+
+   if(InpDbgLog)
+      PrintFormat("SafeRollTrendPair rolled from Row %d to Row %d", prevRow, curRow);
 }
 
 //────────────────────────────────────────────────────────────────
@@ -237,53 +236,48 @@ void CheckProfitClose()
 }
 //────────────────────────────────────────────────────────────────
 // CheckWeightedClose()
-// 合計損益が “完全ゼロ” の場合のみ全決済
+//   ポジション損益が 0 以上になった ALT 列を丸ごと決済
 //────────────────────────────────────────────────────────────────
 void CheckWeightedClose()
 {
+   for(uint c = 1; c < nextCol; c++)
+   {
+      if(colTab[c].role != ROLE_ALT) continue;          // ALT 列のみ対象
 
-    // 完全ゼロ判定のため、しきい値は 0 に固定
-    double epsProfit = 0.0;
+      double sumProfit = 0.0;
+      ulong  tks[128];
+      int    n = 0;
 
-    for(uint c = 1; c < nextCol; c++)
-    {
-        if(colTab[c].role != ROLE_ALT) continue;
-        // 奇数本のみ対象
-        if((colTab[c].posCnt & 1) == 0) continue;
+      // ── 列 c の全ポジ損益を集計
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         if(!SelectPosByIndex(i)) continue;
+         int r; uint col;
+         if(!Parse(PositionGetString(POSITION_COMMENT), r, col)
+            || col != c) continue;
 
-        double sumProfit = 0.0;
-        ulong  tks[128];
-        int    n = 0;
-        for(int i = PositionsTotal() - 1; i >= 0; i--)
-        {
-            if(!SelectPosByIndex(i)) continue;
-            int r; uint col;
-            if(!Parse(PositionGetString(POSITION_COMMENT), r, col) || col != c) continue;
-            tks[n++]   = PositionGetTicket(i);
-            sumProfit += PositionGetDouble(POSITION_PROFIT);
-        }
-        if(n == 0) continue;
+         tks[n++]   = PositionGetTicket(i);
+         sumProfit += PositionGetDouble(POSITION_PROFIT);
+      }
+      if(n == 0) continue;
 
-        // 完全ゼロなら全決済
-        if(MathAbs(sumProfit) <= epsProfit /* == 0 */)
-        {
-            uint closed = 0;
-            for(int k = 0; k < n; k++)
-            {
-                if(trade.PositionClose(tks[k]))
-                {
-                    closed++;
-                    colTab[c].posCnt--;
-                }
-            }
-            altClosedRow[c] = lastRow;
-            if(colTab[c].posCnt == 0) colTab[c].role = ROLE_PENDING;
-            if(InpDbgLog)
-                PrintFormat("WeightedClose ZERO col=%u  P/L=%.2f  closed=%u",
-                            c, sumProfit, closed);
-        }
-    }
+      // ── 0円以上なら全決済
+      if(sumProfit >= 0.0)
+      {
+         uint closed = 0;
+         for(int k = 0; k < n; k++)
+            if(trade.PositionClose(tks[k])) { closed++; colTab[c].posCnt--; }
+
+         altClosedRow[c] = lastRow;
+         if(colTab[c].posCnt == 0) colTab[c].role = ROLE_PENDING;
+
+         if(InpDbgLog)
+            PrintFormat("WeightedClose ≥0  col=%u  P/L=%.2f  closed=%u",
+                        c, sumProfit, closed);
+      }
+   }
 }
+
 
 //──────────────── Equity Target ──────────────────────────────────
 void CheckTargetEquity()
@@ -311,33 +305,35 @@ void CheckTargetEquity()
    startEquity=curEquity;
 }
 
-//──────────────── Row step ──────────────────────────────────────
+//────────────────────────────────────────────────────────────────
+// StepRow(int newRow, int dir)
+//   グリッドを1行動いたときのメインロジック
+//────────────────────────────────────────────────────────────────
 void StepRow(int newRow, int dir)
 {
-    bool pivot = (trendSign != 0 && dir != trendSign);
+   bool pivot = (trendSign != 0 && dir != trendSign);   // ★1行でも反転したら pivot
 
-    if(InpDbgLog)
-        PrintFormat("StepRow newRow=%d dir=%d pivot=%s",
-                    newRow, dir, pivot ? "YES" : "NO");
+   if(InpDbgLog)
+      PrintFormat("StepRow newRow=%d dir=%d pivot=%s",
+                  newRow, dir, pivot ? "YES" : "NO");
 
-       if(pivot || trendSign==0)
+   if(pivot || trendSign == 0)
    {
-       FixTrendPair(dir, newRow);
-       CreateTrendPair(newRow);
+      FixTrendPair(dir, newRow);        // 旧ペアを利確列 / ALT 列へ
+      CreateTrendPair(newRow);          // 新しい Trend ペアを作成
    }
    else
    {
-       SafeRollTrendPair(newRow, dir);
+      SafeRollTrendPair(newRow, dir);   // 同方向なら単純ロール
    }
 
-    // ❸ PENDING → TREND への昇格チェック
-    for(uint c = 1; c < nextCol; c++)
-        if(colTab[c].role == ROLE_PENDING && colTab[c].posCnt == 0)
-            colTab[c].role = ROLE_TREND;
+   // PENDING → TREND への昇格チェック
+   for(uint c = 1; c < nextCol; c++)
+      if(colTab[c].role == ROLE_PENDING && colTab[c].posCnt == 0)
+         colTab[c].role = ROLE_TREND;
 
-    // ❹ 最後に行進の状態を更新
-    lastRow   = newRow;
-    trendSign = dir;
+   lastRow   = newRow;
+   trendSign = dir;
 }
 
 //────────────────────────────────────────────────────────────────
@@ -352,29 +348,19 @@ void UpdateAlternateCols(int curRow)
             Place(AltDir(c, curRow), c, curRow);
     }
 }
-//────────────────────────────────────────────────────────────────
-// SyncRowByPrice()
-//   basePrice からの乖離を GridSize 刻みで丸めて「行番号」を返す
-//────────────────────────────────────────────────────────────────
-int SyncRowByPrice()
-{
-    // 現在の Bid と基準価格の差分を取得
-    double bid   = SymbolInfoDouble(InpSymbol, SYMBOL_BID);
-    double delta = bid - basePrice;
-    // 0.5グリッド分をシフトして丸め、行番号として返す
-    return (int)MathFloor((delta + GridSize * 0.5) / GridSize);
-}
 
-//──────────────── OnInit / OnTick ───────────────────────────────
+//───────────────────────OnInit─────────────────────────────────────────
 int OnInit()
 {
-   GridSize=InpGridSize;
-   basePrice=rowAnchor=SymbolInfoDouble(InpSymbol,SYMBOL_BID);
-   startEquity=AccountInfoDouble(ACCOUNT_EQUITY);
+   GridSize    = InpGridSize;
+   basePrice   = SymbolInfoDouble(InpSymbol, SYMBOL_BID);
+   rowAnchor   = basePrice;              // 基準アンカーは BID そのまま
+   startEquity = AccountInfoDouble(ACCOUNT_EQUITY);
 
    ClearColTab(); ArrayInitialize(altClosedRow,-9999);
    trade.SetExpertMagicNumber(InpMagic);
 
+   // 最初の Trend ペア作成
    colTab[1].id=1; colTab[1].role=ROLE_TREND;
    colTab[2].id=2; colTab[2].role=ROLE_TREND;
    trendBCol=1; trendSCol=2; nextCol=3;
@@ -387,29 +373,35 @@ int OnInit()
    return INIT_SUCCEEDED;
 }
 
-
+//────────────────────────────────────────────────────────────────
+// OnTick
+//   rowAnchor ± GridSize で 1 行ずつステップする。
+//   StepRow() が lastRow / trendSign を更新するので
+//   ★ここでは書き換えない★
+//────────────────────────────────────────────────────────────────
 void OnTick()
 {
-   // ① 現在の行番号をシンキング
-   int newRow = SyncRowByPrice();
-   // ② 方向を決定
-   int dir = (newRow > lastRow ? +1 : (newRow < lastRow ? -1 : 0));
-   if(dir != 0)
+   double bid = SymbolInfoDouble(InpSymbol, SYMBOL_BID);
+
+   //―― 上方ブレイク → 1 行上へ
+   if(bid >= rowAnchor + GridSize - 1e-9)
    {
-       // ③ 一行分だけステップ
-       StepRow(newRow, dir);
-       // ④ 行アンカーを再計算
-       rowAnchor = basePrice + newRow * GridSize;
-       // ⑤ trendSign を更新
-       trendSign = dir;
-       lastRow   = newRow;
+      StepRow(lastRow + 1, +1);   // ← StepRow が lastRow を 1 にする
+      rowAnchor += GridSize;      // アンカーだけ進める
+   }
+   //―― 下方ブレイク → 1 行下へ
+   else if(bid <= rowAnchor - GridSize + 1e-9)
+   {
+      StepRow(lastRow - 1, -1);
+      rowAnchor -= GridSize;
    }
 
-   // ⑥ ほかの機能
+   //―― Alternate 列の建て直し
+   UpdateAlternateCols(lastRow);
+
+   //―― クローズ系
    CheckProfitClose();
    CheckWeightedClose();
    CheckTargetEquity();
 }
-
-
 //+------------------------------------------------------------------+
