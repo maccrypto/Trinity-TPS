@@ -148,25 +148,26 @@ void FixTrendPair(int dir, int curRow)
 
    if(dir > 0)
    {
-      // 上昇トレンド：B→PROFIT, S→ALT
       colTab[trendBCol].role      = ROLE_PROFIT;
-      profit.active              = true;
-      profit.col                 = trendBCol;
-      profit.refRow              = curRow;
-      colTab[trendSCol].role     = ROLE_ALT;
-      colTab[trendSCol].altRefRow= curRow;
-      colTab[trendSCol].altRefDir= -colTab[trendSCol].lastDir;
+      profit.active               = true;
+      profit.col                  = trendBCol;
+     profit.refRow               = curRow;
+
+      colTab[trendSCol].role      = ROLE_ALT;
+      colTab[trendSCol].altRefRow = curRow;
+      colTab[trendSCol].altRefDir =  colTab[trendSCol].lastDir;   // ← 符号反転を削除
    }
    else
    {
-      // 下降トレンド：S→PROFIT, B→ALT
-      colTab[trendSCol].role      = ROLE_PROFIT;
-      profit.active              = true;
-      profit.col                 = trendSCol;
-      profit.refRow              = curRow;
-      colTab[trendBCol].role     = ROLE_ALT;
-      colTab[trendBCol].altRefRow= curRow;
-      colTab[trendBCol].altRefDir= -colTab[trendBCol].lastDir;
+       colTab[trendSCol].role      = ROLE_PROFIT;
+      profit.active               = true;
+      profit.col                  = trendSCol;
+      profit.refRow               = curRow;
+
+      // ── Buy側列を ALT 化（“直前に建った向き” を基準にパリティで反転）
+      colTab[trendBCol].role      = ROLE_ALT;
+      colTab[trendBCol].altRefRow = curRow;
+      colTab[trendBCol].altRefDir =  colTab[trendBCol].lastDir;   // ← 符号反転を削除
    }
 
    trendBCol = trendSCol = 0;
@@ -237,12 +238,14 @@ void CheckProfitClose()
 //────────────────────────────────────────────────────────────────
 // CheckWeightedClose()
 //   ポジション損益が 0 以上になった ALT 列を丸ごと決済
+//   ※ ALT 列の枚数が「3 枚以上」かつ「奇数枚」の場合のみ発火
 //────────────────────────────────────────────────────────────────
 void CheckWeightedClose()
 {
    for(uint c = 1; c < nextCol; c++)
    {
-      if(colTab[c].role != ROLE_ALT) continue;          // ALT 列のみ対象
+      if(colTab[c].role != ROLE_ALT)            // ALT 列のみ対象
+         continue;
 
       double sumProfit = 0.0;
       ulong  tks[128];
@@ -252,32 +255,43 @@ void CheckWeightedClose()
       for(int i = PositionsTotal() - 1; i >= 0; i--)
       {
          if(!SelectPosByIndex(i)) continue;
-         int r; uint col;
-         if(!Parse(PositionGetString(POSITION_COMMENT), r, col)
-            || col != c) continue;
+
+         int  r;
+         uint col;
+         if(!Parse(PositionGetString(POSITION_COMMENT), r, col) || col != c)
+            continue;
 
          tks[n++]   = PositionGetTicket(i);
          sumProfit += PositionGetDouble(POSITION_PROFIT);
       }
-      if(n == 0) continue;
+      if(n == 0)                // その列に建玉なし
+         continue;
 
-      // ── 0円以上なら全決済
-      if(sumProfit >= 0.0)
+      // ── BE 決済条件：0 以上 & 3 枚以上 & 奇数枚
+      if(sumProfit >= 0.0 && n >= 3 && (n & 1) == 1)
       {
          uint closed = 0;
          for(int k = 0; k < n; k++)
-            if(trade.PositionClose(tks[k])) { closed++; colTab[c].posCnt--; }
+            if(trade.PositionClose(tks[k]))
+            {
+               closed++;
+               colTab[c].posCnt--;
+            }
 
-         altClosedRow[c] = lastRow;
-         if(colTab[c].posCnt == 0) colTab[c].role = ROLE_PENDING;
+         if(closed > 0)                       // 実際に決済した場合のみ
+         {
+            altClosedRow[c] = lastRow;
 
-         if(InpDbgLog)
-            PrintFormat("WeightedClose ≥0  col=%u  P/L=%.2f  closed=%u",
-                        c, sumProfit, closed);
+            if(colTab[c].posCnt == 0)         // 列が空なら PENDING へ
+               colTab[c].role = ROLE_PENDING;
+
+            if(InpDbgLog)
+               PrintFormat("WeightedClose ≥0  col=%u  P/L=%.2f  closed=%u",
+                           c, sumProfit, closed);
+         }
       }
    }
 }
-
 
 //──────────────── Equity Target ──────────────────────────────────
 void CheckTargetEquity()
@@ -327,28 +341,42 @@ void StepRow(int newRow, int dir)
       SafeRollTrendPair(newRow, dir);   // 同方向なら単純ロール
    }
 
-   // PENDING → TREND への昇格チェック
+   // PENDING→TREND への昇格
    for(uint c = 1; c < nextCol; c++)
-      if(colTab[c].role == ROLE_PENDING && colTab[c].posCnt == 0)
-         colTab[c].role = ROLE_TREND;
+   {
+      if(colTab[c].role != ROLE_PENDING || colTab[c].posCnt != 0) continue;
+
+      // 直前に ALT だった列は再 ALT 化させるため TREND 昇格させない
+      if(altClosedRow[c] == lastRow) continue;
+
+      colTab[c].role = ROLE_TREND;
+   }
 
    lastRow   = newRow;
    trendSign = dir;
 }
 
-//────────────────────────────────────────────────────────────────
-// UpdateAlternateCols(int curRow)
-// altClosedRow[c] == curRow の場合のみ建て直しを抑止
-//────────────────────────────────────────────────────────────────
-void UpdateAlternateCols(int curRow)
+//──────────────────────────────────────────────────────────────
+// UpdateAlternateCols(int curRow,int dir)
+//   Pivot 行に ALT 列を並べる
+//   ★ buyFirst を Pivot 方向（dir）で決定し、altFirst で反転可能に
+//──────────────────────────────────────────────────────────────
+void UpdateAlternateCols(int curRow,int dir)
 {
-    for(uint c = 1; c < nextCol; c++)
-    {
-        if(colTab[c].role == ROLE_ALT && altClosedRow[c] != curRow)
-            Place(AltDir(c, curRow), c, curRow);
-    }
-}
+   // dir>0 : 上昇 Pivot ⇒ Buy から、dir<0 : 下降 Pivot ⇒ Sell から
+   bool buyFirst = (dir > 0);
 
+   if(altFirst)                 // ユーザ設定 or 直前トグルによる反転
+      buyFirst = !buyFirst;
+
+   // 1 本目（B 列側）
+   Place(buyFirst ? ORDER_TYPE_BUY  : ORDER_TYPE_SELL, altBCol, curRow);
+   // 2 本目（S 列側）
+   Place(buyFirst ? ORDER_TYPE_SELL : ORDER_TYPE_BUY , altSCol, curRow);
+
+   // 次回のためにトグル
+   altFirst = !altFirst;
+}
 //───────────────────────OnInit─────────────────────────────────────────
 int OnInit()
 {
