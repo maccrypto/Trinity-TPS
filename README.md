@@ -1,140 +1,175 @@
-# 引継書（Trinity‑TPS プロジェクト）
+# Trinity‑TPS Developer README
 
-## 目的
-
-* 現状・未解決点・作業フローを明文化し、次のアシスタント／開発者が即座に再開できるようにする。
-* **GitHub Actions での自動ビルド／テスト**案と**ローカル PC でテスト → GitHub へ push**案の両方を提示する。
-
----
-
-## 1. リポジトリ構成 <small>(2025‑06‑29 現在)</small>
-
-```text
-Trinity-TPS/
-├─ src/
-│   └─ trinity1.0.3.mq5          # 現行 EA 本体
-├─ .github/
-│   └─ workflows/
-│       └─ ci.yml                # GitHub Actions ワークフロー
-└─ README.md
-```
-
-* **メインブランチ :** `main`
-* **実験ブランチ :** `feature/fix-cell-reuse`  ← WeightedClose / Alternate 修正用
+> **Audience**: Core maintainers / ChatGPT‑o3.
+>
+> Use this file as **the single source of truth** whenever you (re)load the project context.
+> If responses start drifting or logic feels fuzzy, **re‑read this page first.**
 
 ---
 
-## 2. 技術的課題リスト
+## 1. Project Scope
 
-| # | 症状・要求                | 現状メモ                                                                                                        |
-| - | -------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 1 | WeightedClose が発動しない | `CheckWeightedClose()` が `ROLE_ALT` かつ `posCnt ≥ 3` (奇数) & EPS 判定。スプレッド許容幅が過大、または `altClosedRow` ロック解放漏れ疑い。 |
-| 2 | Col1 が交互エントリーしない     | `altRefDir` の符号管理と `AltDir()` 算出が不一致で BUY/SELL が逆転。                                                         |
-| 3 | CI パイプラインが安定しない      | Linux/Wine ルートは DLL 依存で停止。Windows Runner + PowerShell は「MetaEditor パス未検出」or「インストーラ DL 失敗」で停止。               |
-| 4 | テストデータ容量が大きい         | GitHub Actions ランタイムでヒストリ同期がタイムアウト → ローカルテスター案を検討中。                                                         |
-
----
-
-## 3. 推奨フロー①：ローカル PC でテスト → GitHub へ push
-
-### 手順
-
-```bash
-git checkout feature/fix-cell-reuse
-git pull
-
-# MetaEditor で src/trinity1.0.3.mq5 を修正・コンパイル
-# 成功した EX5 を build/ へ保存
-
-# ストラテジーテスターでバックテスト
-# レポートを report/Trinity_$(date +%Y%m%d).html に出力
-
-git add src/trinity1.0.3.mq5 build/*.ex5 report/*.html
-git commit -m "Fix WeightedClose logic + test report"
-git push origin feature/fix-cell-reuse
-```
-
-PR を作成し、レビュー担当（次期アシスタント）が差分を確認して追加パッチを提案。
-
-**利点**
-
-* MT5 環境が手元にあるためテストが安定。
-* GitHub Actions を "コンパイルエラー検知" 専用に縮小できる。
-
----
-
-## 4. 推奨フロー②：GitHub Actions でフルテスト
-
-`.github/workflows/ci.yml` を以下テンプレで置換すると、少なくとも「MetaEditor が見つからない」問題が解消する見込み。
-
-```yaml
-name: MT5-CI
-
-on:
-  push:
-    branches: [ main, feature/fix-cell-reuse ]
-  pull_request:
-  workflow_dispatch:
-
-jobs:
-  test:
-    runs-on: windows-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Download & Install MT5
-      shell: pwsh
-      run: |
-        $url  = 'https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe'
-        $dest = "$env:TEMP\\mt5setup.exe"
-        Invoke-WebRequest $url -OutFile $dest -UseBasicParsing
-        Start-Process -FilePath $dest -ArgumentList '/silent','/dir=C:\\MT5' -Wait
-        "C:\\MT5" | Out-File -FilePath $env:GITHUB_PATH -Encoding ascii -Append
-
-    - name: Compile EA
-      shell: pwsh
-      run: |
-        $editor = Get-ChildItem 'C:\\MT5' -Recurse -Include 'metaeditor*.exe' | Select-Object -First 1
-        if (-not $editor) { throw "MetaEditor not found" }
-        New-Item -ItemType Directory build -Force | Out-Null
-        & $editor.FullName /compile:src\\trinity1.0.3.mq5 /log:build\\compile.log /portable /quiet
-
-    # Strategy Tester を走らせる場合は tester64.exe を同様に呼び出す
-```
-
-**注意**
-
-* Windows Runner の実行時間上限は **60 min**。長期バックテストは `FromDate` を短縮するかローカル実行を推奨。
-
----
-
-## 5. 残タスクと優先度
-
-| 優先  | タスク                                                                                |
-| --- | ---------------------------------------------------------------------------------- |
-| ★★☆ | **WeightedClose 改修** : `posCnt ≥ 3` 条件緩和 + EPS を `SYMBOL_TRADE_TICK_VALUE` などで動的計算 |
-| ★★☆ | **Alternate 列ロジック修復** : `altRefDir` 記録と `AltDir()` 反転ロジックの整合性確保                    |
-| ★☆☆ | `SafeRollTrendPair` の同 row 多重建てガード強化                                               |
-| ★☆☆ | **CI 安定化** : Strategy Tester 部分を省略し "コンパイルのみ" へ切替え or self‑hosted runner 検討        |
-
----
-
-## 6. 次の担当者へ
-
-* まず `feature/fix-cell-reuse` を最新にしてローカルテストし、問題を再現・デバッグしてください。
-* 疑問点は **Issue / PR コメント** にまとめると議論がスムーズです。
-
----
-
-### 開発環境メモ
+Trinity (`Trinity*.mq5`) is a **grid‑following entry engine** that *always* maintains a Buy/Sell pair on price, creating a chessboard of positions every ½‑pip (default).
+TPS (`TPS*.mq5`) is an **overlay strategy** that rides the *mountain–valley* structure produced by Trinity, adding supplementary entries/ exits for extra alpha.
 
 ```
-MetaTrader 5 build ≥ 4150
-Symbols : USDJPY (5‑digit)
-Timeframe : M1 / H1 バックテスト想定
+┌──────────────┐      ┌──────────────┐
+│   Trinity    │----►│     TPS      │
+│  grid core   │      │ set overlay │
+└──────────────┘      └──────────────┘
 ```
 
-### 参考リンク
+*Both* share the same row/column bookkeeping described below.
 
-* 現行 EA ソース : [https://raw.githubusercontent.com/maccrypto/Trinity-TPS/main/src/trinity1.0.3.mq5](https://raw.githubusercontent.com/maccrypto/Trinity-TPS/main/src/trinity1.0.3.mq5)
+---
+
+## 2. Glossary & Invariants
+
+| Term              | Meaning                                                                                                                                                          | Invariant                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| **Row (r)**       | Integer offset of current price from last Pivot in grid units. Positive → uptrend, negative → downtrend.                                                         | On every tick we track `lastRow`.                |
+| **Pivot**         | **First** row of a **trend reversal** (direction sign flip). Example path `… 0→1→2→1→0→‑1→0` → Pivots at rows `2` and `‑1`.                                      | Determined when `dir != trendSign` in `StepRow`. |
+| **Column (c)**    | Horizontal slot in the matrix. New columns are only opened at **Pivot**.                                                                                         | `nextCol` monotone increasing.                   |
+| **TrendPair**     | Two adjacent cols (B/S) that track current trend.                                                                                                                | Exactly *one* active pair at any time.           |
+| **Profit col**    | The *winning* side of TrendPair after Pivot; held until price retraces 1 grid (`refRow‑1`).                                                                      | At most one active.                              |
+| **Alternate col** | The *losing* side plus all historical losers turned mean‑reversion stacks. Always keeps an **odd** number of lots (1,3,5,…) by alternating direction every grid. | Never auto‑closed except by **WeightedClose**.   |
+| **Pending col**   | Empty column waiting to be recycled to Trend.                                                                                                                    |                                                  |
+| **WeightedClose** | BE flush: if an Alternate column has ≥3 lots **and** aggregate P/L ≥0 **and** lot count is odd → close entire column.                                            |                                                  |
+| **Roll**          | Move TrendPair *vertically* by 1 row without opening new columns (close old row lots, open same columns on new row).                                             |                                                  |
+
+---
+
+## 3. Execution Flow (high level)
+
+```mermaid
+flowchart TD
+  Tick --> PriceMove{Did price move >= grid?}
+  PriceMove -- No --> Exit
+  PriceMove -- Yes --> StepRow
+  StepRow --> |Pivot?| PivotProc
+  StepRow --> |No pivot| RollProc
+  PivotProc --> UpdateAlt
+  RollProc --> UpdateAlt
+  UpdateAlt --> Maintenance[ProfitClose / WeightedClose / EquityTarget]
+```
+
+### 3.1 `StepRow(newRow, dir)`
+
+| Phase                  | Key Calls                                                       | Purpose                                                           |
+| ---------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **Identify Pivot**     | `pivot = (trendSign!=0 && dir!=trendSign)`                      | Direction change?                                                 |
+| **Process Old Trend**  | `FixTrendPair`                                                  | Re‑label TrendPair → Profit/Alt and mark `altBCol`, `altSCol`.    |
+| **Spawn New Trend**    | `CreateTrendPair`                                               | Always BUY + SELL at newRow in fresh columns.                     |
+| **Roll (if no pivot)** | `SafeRollTrendPair`                                             | Close prevRow lots of TrendPair, reopen at newRow (same columns). |
+| **Promote Pending**    | any empty column becomes `ROLE_TREND` (unless just Alt‑closed). |                                                                   |
+| **Finalize**           | store `lastRow`, `trendSign`; call `UpdateAlternateCols`.       |                                                                   |
+
+### 3.2 Alternate Column Update
+
+`UpdateAlternateCols(curRow, dir)`
+
+1. Determine starting side (`buyFirst = (dir>0) XOR altFirst`).
+2. Loop all columns where
+
+   * `role==ALT` **and** `altRefRow==curRow`  *(= created at *this* pivot)*.
+3. Place order in direction `buyFirst ? BUY : SELL` **with `isAltFirst=true`** (records initial sign).
+4. Flip `buyFirst` each column, flip global `altFirst` for next pivot.
+
+---
+
+## 4. Data Structures (mq5 globals)
+
+```cpp
+struct ColState {
+  uint id;            // 1..MAX_COL
+  ColRole role;       // PENDING / PROFIT / ALT / TREND
+  int  lastDir;       // +1(Buy) / -1(Sell)
+  int  altRefRow;     // Pivot row that created this ALT col
+  int  altRefDir;     // Initial direction at creation
+  uint posCnt;        // live lot count in column
+};
+```
+
+Important globals: `trendBCol`, `trendSCol`, `profit`, `altFirst`, `altClosedRow[]`.
+
+---
+
+## 5. Algorithm Details
+
+### 5.1 Pivot Processing – `FixTrendPair(dir, curRow)`
+
+1. Both Trend columns → `ROLE_ALT` **first** (avoid premature pending promote).
+2. Mark their `altRefRow/Dir` from lastDir.
+3. Set **winner side** → `ROLE_PROFIT` + `profit.active=true`.
+4. Define `altBCol/altSCol` (pivot B then S or vice versa, depending on `dir`).
+5. Reset `altFirst=false`; clear `trendBCol/SCol` (new pair will be made).
+
+### 5.2 Trend Roll – `SafeRollTrendPair`
+
+* **Only** closes lots in `prevRow` belonging to TrendPair.
+* Re‑place Buy/Sell on **same columns** at `curRow`.
+
+### 5.3 Alternate Logic
+
+* At every grid move, Alternate column **adds** one lot *opposite* to previous lot at the new row.
+  Example in up‑trend: B→S→B→S… grows 1,3,5… lots.
+* `WeightedClose` flushes entire column when criteria met, sets `role=PENDING`, records `altClosedRow[col]=lastRow` to prevent immediate Trend promotion.
+
+### 5.4 Profit‑Close
+
+* Trigger when **Bid** returns to `(profit.refRow‑1)` grid.
+* Close all lots in `profit.col`, set column back to `ROLE_ALT` (and may become Trend later).
+
+---
+
+## 6. Trinity vs TPS Responsibilities
+
+| Layer       | Duties                                                                                                                                                                                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Trinity** | Maintain perpetual grid; guarantee that at any moment there exists: 1×TrendPair, ≤1 Profit column, and ≥1 Alternate columns holding corridor history.                                                                                                              |
+| **TPS**     | Consume *mountain–valley sets* (defined pivot → next pivot) and apply higher‑order exits, trailing stops, pyramiding etc. TPS **never** manipulates Trinity’s bookkeeping arrays – it only opens/ closes extra tickets or issues close requests via provided APIs. |
+
+---
+
+## 7. Walk‑Through Example (2025‑05‑27 Journal)
+
+*(abridged – see `5月27日建玉　テキスト.txt`)*
+
+<details><summary>Click to expand</summary>
+
+| #  | Row path | Key events                                      |
+| -- | -------- | ----------------------------------------------- |
+| 1  | 0        | Start TrendPair (Col1/2)                        |
+| 2  | 0→1      | Col1→Profit, Col2→Alt (+Buy); open Col3/4 Trend |
+| 3  | 1→2      | Roll Col3/4; Alt Col2 adds S                    |
+| …  | …        | …                                               |
+| 12 | …        | WeightedClose flushes Col? etc.                 |
+
+</details>
+
+---
+
+## 8. Testing & Debug Checklist
+
+* **Unit**: simulate deterministic price path 0→1→0→‑1→0 and assert column roles / lot counts after each call.
+* **WeightedClose**: craft Alt column with \[+1, ‑1, +1] lots then advance to breakeven.
+* **Spread‑cost audit**: ensure `SafeRollTrendPair` closes exactly 2 tickets per grid.
+* **Edge**: Fast whip‑saw pivot within <1 tick (price jump ≥2×grid). StepRow should be called twice consecutively.
+
+---
+
+## 9. Planned Improvements / TODO
+
+* [ ] **WeightedClose**: allow configurable BE threshold (pips or money).
+* [ ] Skip closing losing side of TrendPair during Roll to save spread (requires hedging flag off).
+* [ ] TPS: hierarchical set detection & batch close at major pivots.
+* [ ] CLI/Indicator overlay to visualise Row/Col matrix.
+
+---
+
+## 10. Change Log
+
+| Date       | Ver       | Notes                                                                       |
+| ---------- | --------- | --------------------------------------------------------------------------- |
+| 2024‑06‑29 | 1.0.4     | Original Trinity grid core.                                                 |
+| 2025‑07‑03 | 1.1.0‑dev | README rewritten for internal use; WeightedClose spec fixed (≥0 & odd >=3). |
