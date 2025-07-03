@@ -364,73 +364,64 @@ void CheckTargetEquity()
 }
 
 // ────────────────────────────────────────────────
-// ③ StepRow – Trend 継続では TrendPair を触らない
+// ③ StepRow – pivot／巡行を完全に分岐
 // ────────────────────────────────────────────────
-void StepRow(int newRow,int dir)
+void StepRow(int newRow, int dir)
 {
-   bool pivot = (trendSign!=0 && dir!=trendSign);   // 方向転換だけ Pivot
+   const bool pivot = (trendSign != 0 && dir != trendSign);   // 方向反転のみ pivot
 
    if(InpDbgLog)
       PrintFormat("StepRow newRow=%d dir=%d pivot=%s",
-                  newRow,dir,pivot?"YES":"NO");
+                  newRow, dir, pivot ? "YES" : "NO");
 
-   /*── TrendPair 処理 ───────────────────────*/
+   /*--- 1. TrendPair & ALT の処理 ----------------------------------*/
    if(pivot)
    {
-      // 旧 TrendPair → PROFIT / ALT 化
-      FixTrendPair(dir,newRow);
-
-      // Pivot 行 (newRow==0) に新しい TrendPair を建てる
-      CreateTrendPair(newRow);
-
-      // Pivot 行で ALT のタネ玉を 1 本ずつ
-      SeedPivotAlts(newRow,dir);
+      FixTrendPair(dir, newRow);        // 旧ペア → PROFIT/ALT 化
+      CreateTrendPair(newRow);          // pivot 行に新 TrendPair
+      UpdateAlternateCols(newRow, dir); // pivot 行だけ ALT を並べる
    }
-   /* ★ 継続行では TrendPair を「物理的に」動かさない ★ */
-
-   /*── PENDING → TREND 昇格判定 ────────────*/
-   for(uint c=1;c<nextCol;c++)
+   else
    {
-      if(colTab[c].role!=ROLE_PENDING || colTab[c].posCnt!=0) continue;
-      if(altClosedRow[c]==lastRow) continue;     // 直前 ALT 列は保留
+      SafeRollTrendPair(newRow, dir);   // TrendPair を 1 グリッド前進
+      RollAlternateCols(newRow);        // ALT 列も 1 グリッド前進
+   }
+
+   /*--- 2. PENDING → TREND 昇格チェック ---------------------------*/
+   for(uint c = 1; c < nextCol; ++c)
+   {
+      if(colTab[c].role != ROLE_PENDING || colTab[c].posCnt != 0) continue;
+      if(altClosedRow[c] == lastRow) continue;   // 直前で BE 決済した列は一拍置く
       colTab[c].role = ROLE_TREND;
    }
 
-   /*── ALT 列を現 Row に敷き直す ───────────*/
-   RollAlternateCols(newRow);
-
-   /*── 行・方向フラグ更新 ──────────────────*/
+   /*--- 3. 行 & 方向フラグの更新 ----------------------------------*/
    lastRow   = newRow;
    trendSign = dir;
 }
 
-//──────────────────────────────────────────────────────────────
-// UpdateAlternateCols(int curRow,int dir)
-//   pivot 行に ALT 列をすべて並べる
-//   buyFirst = (dir>0) で決定し、altFirst トグルで反転
-//──────────────────────────────────────────────────────────────
-void UpdateAlternateCols(int curRow,int dir)
+// ────────────────────────────────────────────────
+// UpdateAlternateCols – pivot 行専用：ALT を交互に敷く
+//   ・dir > 0 なら Buy 始まり、前回 pivot ごとに altFirst を反転
+//   ・今回 pivot で ALT 化された列 (altRefRow == curRow) だけ建てる
+// ────────────────────────────────────────────────
+void UpdateAlternateCols(int curRow, int dir)
 {
-   bool buyFirst = (dir > 0);          // 上昇 pivot → Buy 始まり
+   bool buyFirst = (dir > 0);          // 上昇 pivot → Buy から
+   if(altFirst) buyFirst = !buyFirst;  // 奇数回 pivot ごとに反転
 
-   if(altFirst)                        // 直前 pivot が反転なら裏返す
-      buyFirst = !buyFirst;
-
-   // ── 今回 pivot で ALT 化された列だけ処理 ──
-   for(uint c = 1; c < nextCol; c++)
+   for(uint c = 1; c < nextCol; ++c)
    {
       if(colTab[c].role != ROLE_ALT)        continue;
-      if(colTab[c].altRefRow != curRow)     continue;
+      if(colTab[c].altRefRow != curRow)     continue;   // 今回 ALT 化された列のみ
 
       ENUM_ORDER_TYPE t = buyFirst ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+      Place(t, c, curRow, /*isAltFirst=*/true);        // Duplicate-guard 付き
 
-      /* ★ 第4引数 = true（必ず 1 と記録される）★ */
-      Place(t, c, curRow, /*isAltFirst=*/true);
-
-      buyFirst = !buyFirst;                 // 列ごとに交互
+      buyFirst = !buyFirst;   // 列ごとに Buy/Sell 交互
    }
 
-   altFirst = !altFirst;                    // 次回 pivot 用トグル
+   altFirst = !altFirst;      // 次の pivot 用トグル
 }
 
 //───────────────────────OnInit─────────────────────────────────────────
