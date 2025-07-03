@@ -363,44 +363,51 @@ void CheckTargetEquity()
    startEquity=curEquity;
 }
 
-//───────────────────────────────────────────────────────────────
-// ③ StepRow – 呼び出し順を整理
-//───────────────────────────────────────────────────────────────
-void StepRow(int newRow, int dir)
+// ────────────────────────────────────────────────
+// ③ StepRow – TrendPair を必ずロールする
+// ────────────────────────────────────────────────
+void StepRow(int newRow,int dir)
 {
-   bool pivot = (trendSign != 0 && dir != trendSign);   // 方向転換だけ Pivot
+   bool pivot = (trendSign!=0 && dir!=trendSign);   // 方向転換だけ Pivot
 
    if(InpDbgLog)
       PrintFormat("StepRow newRow=%d dir=%d pivot=%s",
-                  newRow, dir, pivot ? "YES" : "NO");
+                  newRow,dir,pivot?"YES":"NO");
 
-   //── TrendPair の処理 ──────────────────────────
+   /*── TrendPair 処理 ───────────────────────*/
    if(pivot)
    {
-      FixTrendPair(dir, newRow);        // 旧ペアを PROFIT / ALT 化
-      CreateTrendPair(newRow);          // 新しい Trend ペア
-      SeedPivotAlts(newRow, dir);       // ★ Pivot 行だけタネ玉
+      // 旧ペア → PROFIT / ALT
+      FixTrendPair(dir,newRow);
+
+      // 新しい Trend ペアを Pivot 行 (=newRow) に新設
+      CreateTrendPair(newRow);
+
+      // Pivot 行で ALT 2 列だけ“タネ玉”を敷設
+      SeedPivotAlts(newRow,dir);
    }
    else
    {
-      SafeRollTrendPair(newRow, dir);   // 単純ロール
+      // ★ 継続行では必ず 1 グリッド先へロール ★
+      SafeRollTrendPair(newRow,dir);
    }
 
-   //── PENDING → TREND 昇格判定 ──────────────────
-   for(uint c = 1; c < nextCol; c++)
+   /*── PENDING → TREND 昇格判定 ────────────*/
+   for(uint c=1;c<nextCol;c++)
    {
-      if(colTab[c].role != ROLE_PENDING || colTab[c].posCnt != 0) continue;
-      if(altClosedRow[c] == lastRow) continue;          // 直前 ALT 列は保留
+      if(colTab[c].role!=ROLE_PENDING || colTab[c].posCnt!=0) continue;
+      if(altClosedRow[c]==lastRow) continue;     // 直前 ALT 列は保留
       colTab[c].role = ROLE_TREND;
    }
 
-   //── ALT 列を現行 Row に敷き直す ────────────────
+   /*── ALT 列を現 Row に敷き直す ───────────*/
    RollAlternateCols(newRow);
 
-   //── 行・方向フラグを更新 ───────────────────────
+   /*── 行・方向フラグ更新 ──────────────────*/
    lastRow   = newRow;
    trendSign = dir;
 }
+
 //──────────────────────────────────────────────────────────────
 // UpdateAlternateCols(int curRow,int dir)
 //   pivot 行に ALT 列をすべて並べる
