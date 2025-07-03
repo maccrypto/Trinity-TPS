@@ -364,7 +364,7 @@ void CheckTargetEquity()
 }
 
 // ────────────────────────────────────────────────
-// ③ StepRow – TrendPair を必ずロールする
+// ③ StepRow – Trend 継続では TrendPair を触らない
 // ────────────────────────────────────────────────
 void StepRow(int newRow,int dir)
 {
@@ -377,20 +377,16 @@ void StepRow(int newRow,int dir)
    /*── TrendPair 処理 ───────────────────────*/
    if(pivot)
    {
-      // 旧ペア → PROFIT / ALT
+      // 旧 TrendPair → PROFIT / ALT 化
       FixTrendPair(dir,newRow);
 
-      // 新しい Trend ペアを Pivot 行 (=newRow) に新設
+      // Pivot 行 (newRow==0) に新しい TrendPair を建てる
       CreateTrendPair(newRow);
 
-      // Pivot 行で ALT 2 列だけ“タネ玉”を敷設
+      // Pivot 行で ALT のタネ玉を 1 本ずつ
       SeedPivotAlts(newRow,dir);
    }
-   else
-   {
-      // ★ 継続行では必ず 1 グリッド先へロール ★
-      SafeRollTrendPair(newRow,dir);
-   }
+   /* ★ 継続行では TrendPair を「物理的に」動かさない ★ */
 
    /*── PENDING → TREND 昇格判定 ────────────*/
    for(uint c=1;c<nextCol;c++)
