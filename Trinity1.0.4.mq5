@@ -77,10 +77,16 @@ bool SelectPosByIndex(int index)
            PositionGetInteger(POSITION_MAGIC)==InpMagic);
 }
 
-// Duplicate-guard : Parse() をそのまま使う
+//──────────────── Duplicate-guard ────────────────────────────────
 bool HasPos(uint col,int row)
 {
-   for(int i = PositionsTotal()-1; i >= 0; i--)
+   /* ① WeightedClose で直前に全決済したセルは
+        “埋まっている”扱いにして再エントリーを防ぐ            */
+   if(altClosedRow[col] == row)
+      return true;
+
+   /* ② 通常の重複チェック                            */
+   for(int i = PositionsTotal()-1; i >= 0; --i)
    {
       if(!SelectPosByIndex(i)) continue;
       int r; uint c;
@@ -89,6 +95,7 @@ bool HasPos(uint col,int row)
    }
    return false;
 }
+
 //──────────────── Market order helper ────────────────────────────
 bool Place(ENUM_ORDER_TYPE t, uint col, int row, bool isAltFirst = false)
 {
@@ -184,79 +191,76 @@ void FixTrendPair(int dir, int curRow)
 
    trendBCol = trendSCol = 0;                      // 現役ペアは消滅
 }
-
-//────────────────────────────────────────────────────────────────
-//─── ① SafeRollTrendPair をシンプルに書き換え ─────────────────
-void SafeRollTrendPair(int curRow,       // ← newRow を渡す
-                       int dir)          // +1 / -1
+//──────────────── TrendPair を安全にロール ────────────────────────
+void SafeRollTrendPair(int curRow, int dir)   // dir = +1 / -1
 {
-   int prevRow = curRow - dir;
+   int prevRow = curRow - dir;                // １グリッド前の Row
 
-   /* 旧 Row の TrendPair をクローズ */
+   /* ① 旧 Row に残った Trend ペアを決済 */
    for(int i = PositionsTotal()-1; i >= 0; --i)
    {
       if(!SelectPosByIndex(i)) continue;
       int r; uint c;
       if(!Parse(PositionGetString(POSITION_COMMENT), r, c)) continue;
-      if(r==prevRow && (c==trendBCol || c==trendSCol))
+
+      if(r == prevRow && (c == trendBCol || c == trendSCol))
       {
          ulong tk = PositionGetTicket(i);
-         if(trade.PositionClose(tk)) colTab[c].posCnt--;
+         if(trade.PositionClose(tk))
+            colTab[c].posCnt--;
       }
    }
 
-   /* 新 Row に BUY / SELL 固定で建て直し
-      ─ 既にあれば Place() が無視するので多重発注にならない */
+   /* ② 新 Row に BUY / SELL 固定で建て直し
+         ― Duplicate-guard が効いているので多重発注しない     */
    Place(ORDER_TYPE_BUY , trendBCol, curRow);
    Place(ORDER_TYPE_SELL, trendSCol, curRow);
 }
 
-//───────────────────────────────────────────────────────────────
-void StepRow(int newRow,int dir)
+//──────────────── Row 進行のメインロジック ────────────────────────
+void StepRow(int newRow, int dir)      // dir = +1 / -1
 {
-   bool pivot = (trendSign!=0 && dir!=trendSign);
+   bool pivot = (trendSign != 0 && dir != trendSign);
 
    if(InpDbgLog)
       PrintFormat("StepRow newRow=%d dir=%d pivot=%s",
-                  newRow,dir,pivot?"YES":"NO");
+                  newRow, dir, pivot ? "YES" : "NO");
 
-   /* ───── Pivot 行 ───── */
+   /* ─── Pivot 行に到達 ─── */
    if(pivot)
    {
-      FixTrendPair(dir,newRow);          // 旧 Trend → ALT / PROFIT
-      if(!pivotSeeded){
-         SeedPivotAlts(newRow,dir);      // ALT のタネ２本
+      FixTrendPair(dir, newRow);           // Trend → ALT/PROFIT 化
+      if(!pivotSeeded)
+      {
+         SeedPivotAlts(newRow, dir);       // ALT タネ玉 2 本
          pivotSeeded = true;
       }
-      deferredRoll = true;               // 「次の Row」で新 Trend を作る
+      deferredRoll = true;                 // “次の Row” で新 Trend
    }
-   /* ──── 通常行 ──── */
+   /* ─── 通常行 ─── */
    else
    {
-      if(deferredRoll)                   // ← Pivot 直後１回だけ通る
+      if(deferredRoll)                     // Pivot のすぐ次 Row
       {
-         /* 旧 Trend はすでに ALT 化されているので
-            “ロール”は不要。新しい TrendPair を作るだけ */
-         CreateTrendPair(newRow);        // ★ ここだけで十分
+         CreateTrendPair(newRow);          // 新 Trend ペア生成
          deferredRoll = false;
          pivotSeeded  = false;
       }
       else
       {
-         /* 普段の１グリッド移動：TrendPair をそのまま移動 */
-         SafeRollTrendPair(newRow,dir);
+         SafeRollTrendPair(newRow, dir);   // 既存 Trend 移動のみ
       }
    }
 
-   /* PENDING → TREND へ昇格判定 */
-   for(uint c=1;c<nextCol;++c)
+   /* PENDING → TREND への昇格チェック */
+   for(uint c = 1; c < nextCol; ++c)
    {
-      if(colTab[c].role!=ROLE_PENDING||colTab[c].posCnt!=0) continue;
-      if(altClosedRow[c]==lastRow) continue;
-      colTab[c].role=ROLE_TREND;
+      if(colTab[c].role != ROLE_PENDING || colTab[c].posCnt != 0) continue;
+      if(altClosedRow[c] == lastRow) continue;  // 直前 BE 決済セルは除外
+      colTab[c].role = ROLE_TREND;
    }
 
-   RollAlternateCols(newRow);
+   RollAlternateCols(newRow);              // ALT 敷き直し
 
    lastRow   = newRow;
    trendSign = dir;
@@ -275,23 +279,23 @@ void RollAlternateCols(int curRow)
    }
 }
 
-//───────────────────────────────────────────────────────────────
-// ② Pivot 専用 – ALT の“タネ玉”２本だけ建てる
-//───────────────────────────────────────────────────────────────
-void SeedPivotAlts(int curRow,int dir)
+//──────────────── Pivot 直後に ALT のタネを１往復だけ建てる ─────────
+void SeedPivotAlts(int curRow, int dir)
 {
-   bool buyFirst = (dir>0);
-   if(altFirst) buyFirst = !buyFirst;
+   /* ALT 列がまだ確定していない（=0）の場合はスキップ */
+   if(altBCol == 0 || altSCol == 0)
+      return;
 
-   if(altBCol)
-      Place(buyFirst ? ORDER_TYPE_BUY  : ORDER_TYPE_SELL,
-            altBCol,curRow,true);   // ← isAltFirst=true
+   bool buyFirst = (dir > 0);          // 上昇 pivot → BUY 始まり
+   if(altFirst) buyFirst = !buyFirst;  // 偶奇で反転
 
-   if(altSCol)
-      Place(buyFirst ? ORDER_TYPE_SELL : ORDER_TYPE_BUY ,
-            altSCol,curRow,true);
+   Place(buyFirst ? ORDER_TYPE_BUY  : ORDER_TYPE_SELL,
+         altBCol, curRow, /*isAltFirst=*/true);
 
-   altFirst = !altFirst;
+   Place(buyFirst ? ORDER_TYPE_SELL : ORDER_TYPE_BUY,
+         altSCol, curRow, /*isAltFirst=*/true);
+
+   altFirst = !altFirst;               // 次 pivot 用トグル
 }
 
 //────────────────────────────────────────────────────────────────
