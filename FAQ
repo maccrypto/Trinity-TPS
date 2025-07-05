@@ -1,0 +1,8 @@
+| # | 質問 (不明点) | 現状の理解 / 想定回答 |
+|---|---------------|----------------------|
+| 1 | **初回 Trend ペア (Row 0, c1/c2) は Pivot 行まで保持でよいか**<br>　・途中で BE 決済してはいけない？<br>　・Pivot 直前で Profit/ALT へ役割変換？ | **保持が正解**<br>- Row0 の Trend ペアは「巡行用」なので通常行では毎グリッドロールのみ。<br>- Pivot 到達時に `FixTrendPair()` で **片側を PRO (利確対象)、もう片側を ALT** に役割変換。<br>- BE 条件（`WeightedClose()`）がヒットしても **Trend 列は対象外** なので途中で消えることはない。 |
+| 2 | **Pivot 行での FixTrendPair 手順**<br>　・旧 Trend は同じ Row で ALT 化？<br>　・Profit 列に指定するのは「Pivot 方向に建っていた側」だけ？ | - Pivot 行で旧 Trend 両列を **その場 (同 Row) で ALT 化**。<br>- そのうち **Pivot 方向にあった側だけ `ROLE_PROFIT` に昇格**し利確待ちフラグを立てる。もう一方は ALT のまま残す。 |
+| 3 | **SafeRollTrendPair の適用範囲**<br>　・通常行でも毎行クローズ→建て直しか？<br>　・Pivot 直後 1 行だけロール？ | **通常行は毎回ロールが必要**<br>   - Row↑/↓ に 1 グリッド動くごとに “旧 Row クローズ → 新 Row 同じ列番号で再建” が正。<br>   - Pivot 直後は `deferredRoll` で “旧 Trend を完全終了＋新 TrendPair 生成” を 1 回だけ実行。 |
+| 4 | **Alternate 列のタネ蒔き (SeedPivotAlts)**<br>　・Pivot 行で 2 本とも建てる？<br>　・altFirst トグルの仕様？ | - **Pivot 行ごとに 2 本一括で建てる**。<br>- 上昇 Pivot なら「Buy→Sell」、下降 Pivot なら「Sell→Buy」から交互。<br>- `altFirst` は Pivot を跨ぐたびにトグルし、“Buy/Sell どちらを先に建てるか” を 交互に入れ替えるだけ。 |
+| 5 | **WeightedClose (BE 決済) 後の処理**<br>　・BE 決済セルをすぐ PENDING に格下げ OK？<br>　・何 Row で再昇格？ | - BE 決済で列が空になったら **即 `ROLE_PENDING` へ格下げ** が正。<br>- 同じ Row 内で再エントリーを防ぐため `altClosedRow[col] = lastRow` を記録。<br>- **翌 Row 以降** は通常の昇格判定 (`role==PENDING & posCnt==0`) で再び TREND に戻る可能性アリ。 |
+| 6 | **グリッド飛ばし (Row スキップ) の扱い**<br>　・気配値が急騰/急落した場合どうする？ | **原則 1 行ずつ StepRow() を連続コール**して追いつく実装（＝Row スキップ禁止）。<br>‐ 価格が 2 グリッド以上飛んでいた場合でも while ループ/再帰で<br>&nbsp;&nbsp;`+1→+1` … と階段状に処理し、ロール / Pivot 判定を漏らさないのが安全。 |
