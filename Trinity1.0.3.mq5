@@ -261,22 +261,31 @@ void CheckTargetEquity()
    Place(ORDER_TYPE_SELL,trendSCol,0);
    startEquity=cur;
 }
-//──────────────── UpdateAlternateCols ────────────────────────
+//──────────────── UpdateAlternateCols ──────────────────────────
+//  curRow : 建てる Row
+//  dir    : +1 上昇 / -1 下降
+//  seed   : Pivot 直後の“初回”なら true（altFirst をリセット）
 void UpdateAlternateCols(int curRow,int dir,bool seed)
 {
-   if(altBCol==0 || altSCol==0) return;
+   if(altBCol==0 || altSCol==0)                 // ALT-pair 未確定
+      return;
 
-   bool buyFirst = (dir > 0);
-   if(altFirst)  buyFirst = !buyFirst;
+   if(seed) altFirst = false;                   // 初回は必ず BUY→SELL / SELL→BUY から
 
-   // seed=true（Pivot 行）は ALT “初回”登録として isAltFirst=true を渡す
-   Place(buyFirst ? ORDER_TYPE_BUY  : ORDER_TYPE_SELL, altBCol,
-         curRow, seed);
-   Place(buyFirst ? ORDER_TYPE_SELL : ORDER_TYPE_BUY , altSCol,
-         curRow, seed);
+   /* ── 現時点で ROLE_ALT になっている列だけに建てる ───────── */
+   uint altCol = (colTab[altBCol].role == ROLE_ALT) ? altBCol : altSCol;
 
-   altFirst = !altFirst;
+   bool buyFirst = (dir > 0);                  // 上昇 Pivot は Buy 先行
+   if(altFirst) buyFirst = !buyFirst;          // トグルで反転
+
+   Place(buyFirst ? ORDER_TYPE_BUY  : ORDER_TYPE_SELL,
+         altCol,
+         curRow,
+         true);                                // isAltFirst=true → parity 初期化
+
+   altFirst = !altFirst;                       // 次回のために反転
 }
+
 //──────────────── StepRow ───────────────────────────────────
 void StepRow(int newRow,int dir)
 {
