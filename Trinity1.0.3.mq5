@@ -144,43 +144,34 @@ void CreateTrendPair(int row)
    Place(ORDER_TYPE_BUY ,b,row);
    Place(ORDER_TYPE_SELL,s,row);
 }
-//──────────────── FixTrendPair ────────────────────────────────
-// dir  : +1 = 上昇転換、-1 = 下降転換
-// curRow : Pivot が確定した行
+/*──────────────── FixTrendPair ─────────────────────────────*/
+// ① altRefDir を必ず “その行で実際に出した方向” で保存
 void FixTrendPair(int dir,int curRow)
 {
-   if(trendBCol==0 || trendSCol==0) return;      // 保険
+   if(trendBCol==0 || trendSCol==0) return;
 
-   if(dir>0)                                     // 上昇 Pivot
-   {
-      // ── 利確列 / ALT 列 指定
-      colTab[trendBCol].role = ROLE_PROFIT;
-      profit.active = true;   profit.col = trendBCol;  profit.refRow = curRow;
-
-      colTab[trendSCol].role      = ROLE_ALT;
-      colTab[trendSCol].altRefRow = curRow;
-      colTab[trendSCol].altRefDir = colTab[trendSCol].lastDir;
-
-      // ── Pivot 用 ALT-Pair（ 先手 = trendSCol, 後手 = trendBCol ）
-      altBCol = trendSCol;     // 交互エントリー 1 本目
-      altSCol = trendBCol;     // 交互エントリー 2 本目
-   }
-   else                                           // 下降 Pivot
-   {
-      colTab[trendSCol].role = ROLE_PROFIT;
-      profit.active = true;   profit.col = trendSCol;  profit.refRow = curRow;
-
-      colTab[trendBCol].role      = ROLE_ALT;
-      colTab[trendBCol].altRefRow = curRow;
-      colTab[trendBCol].altRefDir = colTab[trendBCol].lastDir;
-
-      altBCol = trendBCol;
-      altSCol = trendSCol;
+   uint profCol, altCol;
+   if(dir>0){                     // 上昇 Pivot
+      profCol = trendBCol;        // Buy が最高値 → PROFIT
+      altCol  = trendSCol;        // Sell が最安値 → ALT
+   }else{                         // 下降 Pivot
+      profCol = trendSCol;        // Sell が最高値 → PROFIT
+      altCol  = trendBCol;        // Buy が最安値 → ALT
    }
 
-   // 旧 Trend-Pair は役目終了
-   trendBCol = 0;
-   trendSCol = 0;
+   colTab[profCol].role = ROLE_PROFIT;
+
+   colTab[altCol].role      = ROLE_ALT;
+   colTab[altCol].altRefRow = curRow;
+   colTab[altCol].altRefDir = colTab[altCol].lastDir;   // ← ★反転させない
+
+   profit.active = true;  profit.col = profCol;  profit.refRow = curRow;
+
+   // ALT-pair の基準を更新
+   altBCol = altCol;
+   altSCol = profCol;   // PROFIT 列は交互には使わないが参照用に保持
+
+   trendBCol = trendSCol = 0;     // 旧 TrendPair 役目終了
 }
 
 //──────────────── SafeRollTrendPair ─────────────────────────────────
@@ -261,29 +252,30 @@ void CheckTargetEquity()
    Place(ORDER_TYPE_SELL,trendSCol,0);
    startEquity=cur;
 }
-//──────────────── UpdateAlternateCols ──────────────────────────
-//  curRow : 建てる Row
-//  dir    : +1 上昇 / -1 下降
-//  seed   : Pivot 直後の“初回”なら true（altFirst をリセット）
-void UpdateAlternateCols(int curRow,int dir,bool seed)
+/*──────────────── UpdateAlternateCols ─────────────────────────
+ * すべての ROLE_ALT 列を対象に交互エントリー。
+ *   – “新しく ALT になった列” だけ isFirst=true で parity を初期化
+ *   – 既存 ALT 列は AltDir() で自動判定
+ */
+void UpdateAlternateCols(int curRow,int dir,bool /*seed*/)
 {
-   if(altBCol==0 || altSCol==0)                 // ALT-pair 未確定
-      return;
+   for(uint c=1; c<nextCol; ++c)
+   {
+      if(colTab[c].role != ROLE_ALT) continue;
 
-   if(seed) altFirst = false;                   // 初回は必ず BUY→SELL / SELL→BUY から
+      const bool isFirst = (colTab[c].altRefRow == curRow);
+      ENUM_ORDER_TYPE ot;
 
-   /* ── 現時点で ROLE_ALT になっている列だけに建てる ───────── */
-   uint altCol = (colTab[altBCol].role == ROLE_ALT) ? altBCol : altSCol;
+      if(isFirst){
+         // Pivot 直後 1 本目: 上昇 Pivot→Buy, 下降 Pivot→Sell
+         ot = (dir>0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
+      }else{
+         // 交互張り継続
+         ot = AltDir(c,curRow);
+      }
 
-   bool buyFirst = (dir > 0);                  // 上昇 Pivot は Buy 先行
-   if(altFirst) buyFirst = !buyFirst;          // トグルで反転
-
-   Place(buyFirst ? ORDER_TYPE_BUY  : ORDER_TYPE_SELL,
-         altCol,
-         curRow,
-         true);                                // isAltFirst=true → parity 初期化
-
-   altFirst = !altFirst;                       // 次回のために反転
+      Place(ot, c, curRow, isFirst);  // isFirst=true で altRefRow/Dir を固定
+   }
 }
 
 //──────────────── StepRow ───────────────────────────────────
