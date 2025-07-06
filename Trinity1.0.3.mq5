@@ -49,6 +49,9 @@ struct ProfitInfo { bool active; uint col; int refRow; };
 static ProfitInfo profit;   // declared once only
 static double startEquity = 0.0;
 
+//────────────────── Forward-declarations ──────────────────
+void UpdateAlternateCols(int curRow,int dir,bool seed);
+
 //──────────────────────── Utility ────────────────────────────────
 void ClearColTab(){ for(int i=0;i<MAX_COL+2;i++) ZeroMemory(colTab[i]); }
 
@@ -81,23 +84,54 @@ bool HasPos(uint col,int row)
    return false;
 }
 
-bool Place(ENUM_ORDER_TYPE t,uint col,int row,bool isAltFirst=false)
+//──────────────── Market-order helper ──────────────────────────
+// t   : ORDER_TYPE_BUY / ORDER_TYPE_SELL
+// col : 列番号（1-based）
+// row : 行番号（± …）
+// isAltFirst : Pivot 直後「交互エントリー」1 本目かどうか
+bool Place(ENUM_ORDER_TYPE t,
+           uint             col,
+           int              row,
+           bool             isAltFirst = false)
 {
-   if(HasPos(col,row)) return false;
-   double price=(t==ORDER_TYPE_BUY)?SymbolInfoDouble(InpSymbol,SYMBOL_ASK)
-                                   :SymbolInfoDouble(InpSymbol,SYMBOL_BID);
-   bool ok = (t==ORDER_TYPE_BUY)?
-             trade.Buy(InpLot,InpSymbol,price,0,0,Cmnt(row,col)) :
-             trade.Sell(InpLot,InpSymbol,price,0,0,Cmnt(row,col));
-   if(ok)
+   //―――― ① Duplicate-guard ――――
+   //   ・同じセルに既存ポジがある
+   //   ・WeightedClose 直後の “同じ Row” への再建て
+   if(HasPos(col,row)           ||
+      altClosedRow[col] == row)      // ← 加重平均決済直後は 1 行スキップ
+      return false;
+
+   //―――― ② 発注価格を決定（BID/ASK をそのまま使用）――――
+   double price = (t == ORDER_TYPE_BUY)
+                  ? SymbolInfoDouble(InpSymbol,SYMBOL_ASK)
+                  : SymbolInfoDouble(InpSymbol,SYMBOL_BID);
+
+   //―――― ③ 発注実行 ――――
+   bool ok = (t == ORDER_TYPE_BUY)
+             ? trade.Buy (InpLot,InpSymbol,price,0,0,Cmnt(row,col))
+             : trade.Sell(InpLot,InpSymbol,price,0,0,Cmnt(row,col));
+
+   if(!ok)                                     // 失敗したらそのまま返却
+      return false;
+
+   //―――― ④ 内部カウンタ / ALT 情報を更新 ――――
+   colTab[col].posCnt++;
+   colTab[col].lastDir = (t == ORDER_TYPE_BUY ? +1 : -1);
+
+   if(isAltFirst)                              // “交互エントリー” 初回だけ記録
    {
-      colTab[col].posCnt++;
-      colTab[col].lastDir = (t==ORDER_TYPE_BUY?+1:-1);
-      if(isAltFirst){ colTab[col].altRefRow=row; colTab[col].altRefDir=colTab[col].lastDir; }
-      if(InpDbgLog) PrintFormat("[NEW] r=%d c=%u role=%d dir=%s ALTfirst=%d posCnt=%u",
-                     row,col,colTab[col].role,(t==ORDER_TYPE_BUY?"Buy":"Sell"),isAltFirst,colTab[col].posCnt);
+      colTab[col].altRefRow = row;
+      colTab[col].altRefDir = colTab[col].lastDir;
    }
-   return ok;
+
+   //―――― ⑤ デバッグログ ――――
+   if(InpDbgLog)
+      PrintFormat("[NEW] r=%d c=%u role=%d dir=%s ALTfirst=%d posCnt=%u",
+                  row, col, colTab[col].role,
+                  (t==ORDER_TYPE_BUY ? "Buy" : "Sell"),
+                  isAltFirst, colTab[col].posCnt);
+
+   return true;
 }
 
 //──────────────── Trend helpers ─────────────────────────────────
@@ -110,43 +144,43 @@ void CreateTrendPair(int row)
    Place(ORDER_TYPE_BUY ,b,row);
    Place(ORDER_TYPE_SELL,s,row);
 }
-//──────────────── FixTrendPair───────────────
+//──────────────── FixTrendPair ────────────────────────────────
+// dir  : +1 = 上昇転換、-1 = 下降転換
+// curRow : Pivot が確定した行
 void FixTrendPair(int dir,int curRow)
 {
-   if(trendBCol==0 || trendSCol==0) return;
+   if(trendBCol==0 || trendSCol==0) return;      // 保険
 
-   /*―― 1) 旧 TrendPair を Profit / ALT に振り分け ――*/
-   if(dir>0){                            // 上昇 Pivot
-      colTab[trendBCol].role = ROLE_PROFIT;                 // ← 利確列
-      profit.active = true; profit.col = trendBCol; profit.refRow = curRow;
+   if(dir>0)                                     // 上昇 Pivot
+   {
+      // ── 利確列 / ALT 列 指定
+      colTab[trendBCol].role = ROLE_PROFIT;
+      profit.active = true;   profit.col = trendBCol;  profit.refRow = curRow;
 
-      colTab[trendSCol].role = ROLE_ALT;                    // ← 旧 S 列は ALT 化
+      colTab[trendSCol].role      = ROLE_ALT;
       colTab[trendSCol].altRefRow = curRow;
       colTab[trendSCol].altRefDir = colTab[trendSCol].lastDir;
-   }
-   else{                                  // 下降 Pivot
-      colTab[trendSCol].role = ROLE_PROFIT;
-      profit.active = true; profit.col = trendSCol; profit.refRow = curRow;
 
-      colTab[trendBCol].role = ROLE_ALT;
+      // ── Pivot 用 ALT-Pair（ 先手 = trendSCol, 後手 = trendBCol ）
+      altBCol = trendSCol;     // 交互エントリー 1 本目
+      altSCol = trendBCol;     // 交互エントリー 2 本目
+   }
+   else                                           // 下降 Pivot
+   {
+      colTab[trendSCol].role = ROLE_PROFIT;
+      profit.active = true;   profit.col = trendSCol;  profit.refRow = curRow;
+
+      colTab[trendBCol].role      = ROLE_ALT;
       colTab[trendBCol].altRefRow = curRow;
       colTab[trendBCol].altRefDir = colTab[trendBCol].lastDir;
+
+      altBCol = trendBCol;
+      altSCol = trendSCol;
    }
 
-   /*―― 2) Pivot 後に敷く “交互 ALT ペア” を **毎回まっさらで 2 列** 用意 ――*/
-   altBCol = nextCol++;
-   altSCol = nextCol++;
-
-   colTab[altBCol].id   = altBCol;
-   colTab[altBCol].role = ROLE_ALT;
-   colTab[altBCol].posCnt = 0;           // 念のため初期化
-
-   colTab[altSCol].id   = altSCol;
-   colTab[altSCol].role = ROLE_ALT;
-   colTab[altSCol].posCnt = 0;
-
-   /*―― 3) 現役 TrendPair を無効化――*/
-   trendBCol = trendSCol = 0;
+   // 旧 Trend-Pair は役目終了
+   trendBCol = 0;
+   trendSCol = 0;
 }
 
 //──────────────── SafeRollTrendPair ─────────────────────────────────
@@ -227,26 +261,55 @@ void CheckTargetEquity()
    Place(ORDER_TYPE_SELL,trendSCol,0);
    startEquity=cur;
 }
-
-//──────────────── Row engine ───────────────────────────────────
-void UpdateAlternateCols(int curRow,int dir)
+//──────────────── UpdateAlternateCols ────────────────────────
+void UpdateAlternateCols(int curRow,int dir,bool seed)
 {
-   if(altBCol==0||altSCol==0) return;
-   bool buyFirst=(dir>0);
-   if(altFirst) buyFirst=!buyFirst;
-   Place(buyFirst?ORDER_TYPE_BUY:ORDER_TYPE_SELL,altBCol,curRow,true);
-   Place(buyFirst?ORDER_TYPE_SELL:ORDER_TYPE_BUY,altSCol,curRow,true);
-   altFirst=!altFirst;
+   if(altBCol==0 || altSCol==0) return;
+
+   bool buyFirst = (dir > 0);
+   if(altFirst)  buyFirst = !buyFirst;
+
+   // seed=true（Pivot 行）は ALT “初回”登録として isAltFirst=true を渡す
+   Place(buyFirst ? ORDER_TYPE_BUY  : ORDER_TYPE_SELL, altBCol,
+         curRow, seed);
+   Place(buyFirst ? ORDER_TYPE_SELL : ORDER_TYPE_BUY , altSCol,
+         curRow, seed);
+
+   altFirst = !altFirst;
 }
-//────────────────StepRow ───────────────────────────────────
+//──────────────── StepRow ───────────────────────────────────
 void StepRow(int newRow,int dir)
 {
-   bool pivot=(trendSign && dir!=trendSign);
-   if(InpDbgLog) PrintFormat("StepRow newRow=%d dir=%d pivot=%s",newRow,dir,pivot?"YES":"NO");
-   if(pivot || trendSign==0){ FixTrendPair(dir,newRow); CreateTrendPair(newRow); UpdateAlternateCols(newRow,dir);} else { SafeRollTrendPair(newRow,dir); }
-   for(uint c=1;c<nextCol;c++) if(colTab[c].role==ROLE_PENDING && colTab[c].posCnt==0 && altClosedRow[c]!=lastRow) colTab[c].role=ROLE_TREND;
-   
-   lastRow=newRow; trendSign=dir;
+   bool firstMove = (trendSign == 0);          // 初回か？
+   bool pivot     = (!firstMove && dir != trendSign);
+
+   if(InpDbgLog)
+      PrintFormat("StepRow newRow=%d dir=%d firstMove=%s pivot=%s",
+                  newRow, dir,
+                  firstMove ? "YES" : "NO",
+                  pivot     ? "YES" : "NO");
+
+   if(firstMove || pivot)
+   {
+      FixTrendPair(dir, newRow);               // 旧 Trend → Profit / ALT
+      CreateTrendPair(newRow);                 // 新 Trend ペア
+      UpdateAlternateCols(newRow, dir, true);  // ★ ALT 初回 seed=true
+   }
+   else
+   {
+      SafeRollTrendPair(newRow, dir);          // 巡行ロール
+      UpdateAlternateCols(newRow, dir, false); // ★ seed=false
+   }
+
+   // PENDING → TREND 昇格
+   for(uint c = 1; c < nextCol; c++)
+      if(colTab[c].role == ROLE_PENDING &&
+         colTab[c].posCnt == 0         &&
+         altClosedRow[c] != lastRow)
+            colTab[c].role = ROLE_TREND;
+
+   lastRow   = newRow;
+   trendSign = dir;
 }
 
 //───────────────────────────────────────────────────────────────
