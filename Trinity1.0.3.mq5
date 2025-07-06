@@ -27,6 +27,14 @@ struct ColState
    int     altRefDir;   // first direction (+1/-1)
    uint    posCnt;      // live positions in column
 };
+/*──────────────── 1)  ProfitInfo 構造体を拡張 ───────────────*/
+struct ProfitInfo
+{
+   bool  active;
+   uint  col;       // 利食い対象 (max-Sell) の Col
+   uint  altCol;    // “最安値 Buy” 側 Col  ← ここへ Sell を建て直す
+   int   refRow;    // Pivot 行 (= 最安値 Buy の Row)
+};
 
 #define MAX_COL 2048
 static ColState colTab[MAX_COL + 2];
@@ -45,7 +53,6 @@ static uint  altBCol = 0;
 static uint  altSCol = 0;
 static bool  altFirst = false;
 
-struct ProfitInfo { bool active; uint col; int refRow; };
 static ProfitInfo profit;   // declared once only
 static double startEquity = 0.0;
 
@@ -144,34 +151,38 @@ void CreateTrendPair(int row)
    Place(ORDER_TYPE_BUY ,b,row);
    Place(ORDER_TYPE_SELL,s,row);
 }
-/*──────────────── FixTrendPair ─────────────────────────────*/
-// ① altRefDir を必ず “その行で実際に出した方向” で保存
+/*──────────────── 2)  FixTrendPair() の末尾を修正 ───────────*/
 void FixTrendPair(int dir,int curRow)
 {
    if(trendBCol==0 || trendSCol==0) return;
 
    uint profCol, altCol;
-   if(dir>0){                     // 上昇 Pivot
-      profCol = trendBCol;        // Buy が最高値 → PROFIT
-      altCol  = trendSCol;        // Sell が最安値 → ALT
-   }else{                         // 下降 Pivot
-      profCol = trendSCol;        // Sell が最高値 → PROFIT
-      altCol  = trendBCol;        // Buy が最安値 → ALT
+   if(dir>0){                   // 上昇 Pivot
+      profCol = trendBCol;      // max-Sell になる列
+      altCol  = trendSCol;      // min-Buy になる列
+   }else{                       // 下降 Pivot
+      profCol = trendSCol;
+      altCol  = trendBCol;
    }
 
+   //── role 設定
    colTab[profCol].role = ROLE_PROFIT;
 
    colTab[altCol].role      = ROLE_ALT;
    colTab[altCol].altRefRow = curRow;
-   colTab[altCol].altRefDir = colTab[altCol].lastDir;   // ← ★反転させない
+   colTab[altCol].altRefDir = colTab[altCol].lastDir;  // ← 反転しない
 
-   profit.active = true;  profit.col = profCol;  profit.refRow = curRow;
+   //── ProfitInfo を登録
+   profit.active = true;
+   profit.col    = profCol;
+   profit.altCol = altCol;      // ★ 追加
+   profit.refRow = curRow;
 
-   // ALT-pair の基準を更新
+   // ALT ペア基準
    altBCol = altCol;
-   altSCol = profCol;   // PROFIT 列は交互には使わないが参照用に保持
+   altSCol = profCol;
 
-   trendBCol = trendSCol = 0;     // 旧 TrendPair 役目終了
+   trendBCol = trendSCol = 0;
 }
 
 //──────────────── SafeRollTrendPair ─────────────────────────────────
@@ -200,43 +211,82 @@ ENUM_ORDER_TYPE AltDir(uint col,int curRow)
    return (dir>0)?ORDER_TYPE_BUY:ORDER_TYPE_SELL;
 }
 
-//──────────────── Profit / BE / Target checks ──────────────────
+/*──────────────── CheckProfitClose() ─────────*/
 void CheckProfitClose()
 {
    if(!profit.active) return;
-   double tgt = basePrice + (profit.refRow-1)*GridSize;
-   if(SymbolInfoDouble(InpSymbol,SYMBOL_BID) > tgt + 1e-9) return;
-   for(int i=PositionsTotal()-1;i>=0;i--)
+
+   // 1 グリッド下の価格 (= BE レート) に達したか
+   double tgtPrice = basePrice + (profit.refRow - 1) * GridSize;
+   if(SymbolInfoDouble(InpSymbol,SYMBOL_BID) > tgtPrice + 1e-9)
+      return;
+
+   //── ① PROFIT 列 (max-Sell) を全決済
+   uint closed = 0;
+   for(int i=PositionsTotal()-1; i>=0; --i)
    {
       if(!SelectPosByIndex(i)) continue;
-      int r; uint c; if(!Parse(PositionGetString(POSITION_COMMENT),r,c)) continue;
-      if(c==profit.col && trade.PositionClose(PositionGetTicket(i))) colTab[c].posCnt--;
+      int r; uint c;
+      if(!Parse(PositionGetString(POSITION_COMMENT), r, c) || c!=profit.col) continue;
+      ulong tk = PositionGetTicket(i);
+      if(trade.PositionClose(tk))
+      {
+         ++closed;
+         colTab[c].posCnt--;
+      }
    }
-   profit.active=false;
-}
+   if(closed==0) return;   // まだ玉が残っている ⇒ 次 Tick へ
 
+   //── ② min-Buy 側 Col へ “Sell” を新規建て → この Col を ALT 化
+   int newRow = profit.refRow - 1;   // ちょうど 1 グリッド下
+   Place(ORDER_TYPE_SELL, profit.altCol, newRow, true); // isFirst=true
+
+   colTab[profit.altCol].role = ROLE_ALT;  // 明示 ALT 化
+
+   //── ③ 終了処理
+   profit.active = false;
+
+   if(InpDbgLog)
+      PrintFormat("[PROFIT-CLOSE] col=%u closed=%u  → Sell re-built in col=%u row=%d",
+                  profit.col, closed, profit.altCol, newRow);
+}
+/*──────────────── 4)  CheckWeightedClose() にログを追加 ─────*/
 void CheckWeightedClose()
 {
-   for(uint c=1;c<nextCol;c++)
+   for(uint c=1; c<nextCol; ++c)
    {
-      if(colTab[c].role!=ROLE_ALT) continue;
-      double sum=0.0; ulong tks[128]; int n=0;
-      for(int i=PositionsTotal()-1;i>=0;i--)
+      if(colTab[c].role != ROLE_ALT) continue;
+
+      double sum = 0.0;
+      ulong  tks[128];
+      int    n = 0;
+
+      for(int i=PositionsTotal()-1; i>=0; --i)
       {
          if(!SelectPosByIndex(i)) continue;
-         int r; uint col; if(!Parse(PositionGetString(POSITION_COMMENT),r,col)||col!=c) continue;
-         tks[n++]=PositionGetTicket(i);
-         sum+=PositionGetDouble(POSITION_PROFIT);
+         int r; uint col;
+         if(!Parse(PositionGetString(POSITION_COMMENT), r, col) || col!=c) continue;
+         tks[n++] = PositionGetTicket(i);
+         sum += PositionGetDouble(POSITION_PROFIT);
       }
-      if(n && sum>=0.0 && n>=3 && (n&1))
+
+      if(n && (n&1) && sum >= 0.0)
       {
-         for(int k=0;k<n;k++) if(trade.PositionClose(tks[k])) colTab[c].posCnt--;
-         altClosedRow[c]=lastRow;
-         if(colTab[c].posCnt==0) colTab[c].role=ROLE_PENDING;
+         for(int k=0; k<n; ++k)
+            if(trade.PositionClose(tks[k]))
+               colTab[c].posCnt--;
+
+         altClosedRow[c] = lastRow;           // 1 行休止
+         if(colTab[c].posCnt==0) colTab[c].role = ROLE_PENDING;
+
+         if(InpDbgLog)
+            PrintFormat("[WEIGHTED-CLOSE] col=%u rows=%d pos=%d breakeven=%.2f",
+                        c, lastRow, n, sum);
       }
    }
 }
 
+//──────────────── CheckTargetEquity() ──────────────────
 void CheckTargetEquity()
 {
    double cur=AccountInfoDouble(ACCOUNT_EQUITY);
