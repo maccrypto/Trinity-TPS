@@ -35,6 +35,7 @@ struct ProfitInfo
    uint  altCol;    // “最安値 Buy” 側 Col  ← ここへ Sell を建て直す
    int   refRow;    // Pivot 行 (= 最安値 Buy の Row)
 };
+static ProfitInfo profit = { false, 0, 0, 0 };
 
 #define MAX_COL 2048
 static ColState colTab[MAX_COL + 2];
@@ -53,7 +54,6 @@ static uint  altBCol = 0;
 static uint  altSCol = 0;
 static bool  altFirst = false;
 
-static ProfitInfo profit;   // declared once only
 static double startEquity = 0.0;
 
 //────────────────── Forward-declarations ──────────────────
@@ -151,37 +151,37 @@ void CreateTrendPair(int row)
    Place(ORDER_TYPE_BUY ,b,row);
    Place(ORDER_TYPE_SELL,s,row);
 }
-/*──────────────── 2)  FixTrendPair() の末尾を修正 ───────────*/
-void FixTrendPair(int dir,int curRow)
+/*──────────────── FixTrendPair  (完全版) ──────────────────────
+ * 上昇  →  PROFIT = trendBCol (Buy列) , ALT = trendSCol (Sell列)
+ * 下降  →  PROFIT = trendSCol (Sell列), ALT = trendBCol (Buy列)
+ * 交互 1 本目は ALT 列で  dir(+1/-1) と同じ向きに建てる
+ */
+void FixTrendPair(int dir, int curRow)
 {
    if(trendBCol==0 || trendSCol==0) return;
 
-   uint profCol, altCol;
-   if(dir>0){                   // 上昇 Pivot
-      profCol = trendBCol;      // max-Sell になる列
-      altCol  = trendSCol;      // min-Buy になる列
-   }else{                       // 下降 Pivot
-      profCol = trendSCol;
-      altCol  = trendBCol;
-   }
+   /* 列の割り当て */
+   uint profitCol = (dir > 0) ? trendBCol : trendSCol;
+   uint altCol    = (dir > 0) ? trendSCol : trendBCol;
 
-   //── role 設定
-   colTab[profCol].role = ROLE_PROFIT;
+   /* ── 役割設定 ─────────────────────────── */
+   colTab[profitCol].role = ROLE_PROFIT;
 
    colTab[altCol].role      = ROLE_ALT;
    colTab[altCol].altRefRow = curRow;
-   colTab[altCol].altRefDir = colTab[altCol].lastDir;  // ← 反転しない
+   colTab[altCol].altRefDir = dir;               // +1 Buy / -1 Sell
 
-   //── ProfitInfo を登録
+   /* ── ProfitInfo を更新 ─────────────────── */
    profit.active = true;
-   profit.col    = profCol;
-   profit.altCol = altCol;      // ★ 追加
+   profit.col    = profitCol;
+   profit.altCol = altCol;
    profit.refRow = curRow;
 
-   // ALT ペア基準
+   /* ── Pivot 用 ALT ペア基準保持 ─────────── */
    altBCol = altCol;
-   altSCol = profCol;
+   altSCol = profitCol;
 
+   /* ── 旧 TrendPair は解散 ───────────────── */
    trendBCol = trendSCol = 0;
 }
 
@@ -211,45 +211,43 @@ ENUM_ORDER_TYPE AltDir(uint col,int curRow)
    return (dir>0)?ORDER_TYPE_BUY:ORDER_TYPE_SELL;
 }
 
-/*──────────────── CheckProfitClose() ─────────*/
+/*──────────────── CheckProfitClose ───────────────────────────
+ * Bid が (refRow-1) 行を割り込んだら PROFIT 列を全決済。
+ * 同 tick で ALT 列 (altCol) に Sell を 1 行下へ再建て。
+ */
 void CheckProfitClose()
 {
    if(!profit.active) return;
 
-   // 1 グリッド下の価格 (= BE レート) に達したか
-   double tgtPrice = basePrice + (profit.refRow - 1) * GridSize;
-   if(SymbolInfoDouble(InpSymbol,SYMBOL_BID) > tgtPrice + 1e-9)
+   double trigger = basePrice + (profit.refRow - 1) * GridSize;
+   if(SymbolInfoDouble(InpSymbol,SYMBOL_BID) > trigger + 1e-9)
       return;
 
-   //── ① PROFIT 列 (max-Sell) を全決済
+   /* ① PROFIT 列クローズ */
    uint closed = 0;
    for(int i=PositionsTotal()-1; i>=0; --i)
    {
       if(!SelectPosByIndex(i)) continue;
       int r; uint c;
-      if(!Parse(PositionGetString(POSITION_COMMENT), r, c) || c!=profit.col) continue;
-      ulong tk = PositionGetTicket(i);
-      if(trade.PositionClose(tk))
-      {
-         ++closed;
-         colTab[c].posCnt--;
-      }
+      if(!Parse(PositionGetString(POSITION_COMMENT),r,c) || c!=profit.col) continue;
+      if(trade.PositionClose(PositionGetTicket(i)))
+      { colTab[c].posCnt--; ++closed; }
    }
-   if(closed==0) return;   // まだ玉が残っている ⇒ 次 Tick へ
+   if(closed==0) return;
 
-   //── ② min-Buy 側 Col へ “Sell” を新規建て → この Col を ALT 化
-   int newRow = profit.refRow - 1;   // ちょうど 1 グリッド下
-   Place(ORDER_TYPE_SELL, profit.altCol, newRow, true); // isFirst=true
+   /* ② Sell 再建て (altCol, Row = refRow-1) */
+   int newRow = profit.refRow - 1;
+   Place(ORDER_TYPE_SELL, profit.altCol, newRow, true);
+   colTab[profit.altCol].role = ROLE_ALT;
 
-   colTab[profit.altCol].role = ROLE_ALT;  // 明示 ALT 化
-
-   //── ③ 終了処理
-   profit.active = false;
-
+   /* ③ ログ & リセット */
    if(InpDbgLog)
-      PrintFormat("[PROFIT-CLOSE] col=%u closed=%u  → Sell re-built in col=%u row=%d",
+      PrintFormat("[PROFIT-CLOSE] col=%u closed=%u → Sell re-built in col=%u row=%d",
                   profit.col, closed, profit.altCol, newRow);
+
+   profit.active = false;
 }
+
 /*──────────────── 4)  CheckWeightedClose() にログを追加 ─────*/
 void CheckWeightedClose()
 {
@@ -302,12 +300,8 @@ void CheckTargetEquity()
    Place(ORDER_TYPE_SELL,trendSCol,0);
    startEquity=cur;
 }
-/*──────────────── UpdateAlternateCols ─────────────────────────
- * すべての ROLE_ALT 列を対象に交互エントリー。
- *   – “新しく ALT になった列” だけ isFirst=true で parity を初期化
- *   – 既存 ALT 列は AltDir() で自動判定
- */
-void UpdateAlternateCols(int curRow,int dir,bool /*seed*/)
+//────────────────UpdateAlternateCols───────────────────────────────
+void UpdateAlternateCols(int curRow,int /*dir*/,bool /*seed*/)
 {
    for(uint c=1; c<nextCol; ++c)
    {
@@ -316,15 +310,12 @@ void UpdateAlternateCols(int curRow,int dir,bool /*seed*/)
       const bool isFirst = (colTab[c].altRefRow == curRow);
       ENUM_ORDER_TYPE ot;
 
-      if(isFirst){
-         // Pivot 直後 1 本目: 上昇 Pivot→Buy, 下降 Pivot→Sell
-         ot = (dir>0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
-      }else{
-         // 交互張り継続
-         ot = AltDir(c,curRow);
-      }
+      if(isFirst)
+         ot = (colTab[c].altRefDir > 0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
+      else
+         ot = AltDir(c,curRow);   // 交互継続
 
-      Place(ot, c, curRow, isFirst);  // isFirst=true で altRefRow/Dir を固定
+      Place(ot, c, curRow, isFirst);
    }
 }
 
