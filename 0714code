@@ -5,6 +5,90 @@
 //+------------------------------------------------------------------+
 
 #property strict
+/*──────────────── Fake Position pool & API for UNIT_TEST ───────────────*/
+#ifdef UNIT_TEST
+
+/* 1) forward 宣言 + マクロ差し替え —— ここが "include" より前に必要 */
+int    Fake_PositionsTotal();
+ulong  Fake_PositionGetTicket(int idx);
+bool   Fake_PositionSelectByTicket(ulong tk);
+
+double Fake_PositionGetDouble (int property,int index=0);
+long   Fake_PositionGetInteger(int property,int index=0);
+string Fake_PositionGetString(int property,int index=0);
+bool   Fake_PositionGetString(int property,string &value,int index=0);
+bool   Fake_PositionClose(ulong tk);
+
+#define PositionsTotal         Fake_PositionsTotal
+#define PositionGetTicket      Fake_PositionGetTicket
+#define PositionSelectByTicket Fake_PositionSelectByTicket
+#define PositionGetInteger     Fake_PositionGetInteger
+#define PositionGetDouble      Fake_PositionGetDouble
+#define PositionGetString      Fake_PositionGetString
+#define PositionClose          Fake_PositionClose
+
+/* 2) 実装 —— forward の後ならファイル末尾でも OK。ここでは丸ごと置く */
+struct FakePos{
+   ulong  tk;
+   int    row;
+   uint   col;
+   double profit;
+   int    dir;  // +1 Buy / -1 Sell
+};
+static FakePos fakePos[8192];
+static int     fakeCnt = 0;
+static ulong   nextTk  = 1;
+static int     _fpIdx  = -1;
+
+inline string _FakeCmnt(){ return Cmnt(fakePos[_fpIdx].row,fakePos[_fpIdx].col); }
+
+int    Fake_PositionsTotal(){ return fakeCnt; }
+ulong  Fake_PositionGetTicket(int idx){ return fakePos[idx].tk; }
+
+bool   Fake_PositionSelectByTicket(ulong tk){
+   for(int i=0;i<fakeCnt;++i)
+      if(fakePos[i].tk==tk){ _fpIdx=i; return true; }
+   return false;
+}
+
+double Fake_PositionGetDouble(int property,int /*index*/=0){
+   return (property==POSITION_PROFIT)?fakePos[_fpIdx].profit:0.0;
+}
+
+long   Fake_PositionGetInteger(int property,int /*index*/=0){
+   switch(property){
+      case POSITION_MAGIC: return InpMagic;
+      case POSITION_TYPE:  return (fakePos[_fpIdx].dir>0)?POSITION_TYPE_BUY:POSITION_TYPE_SELL;
+      default:             return 0;
+   }
+}
+
+/* GetString 2-overload */
+string Fake_PositionGetString(int property,int /*index*/=0){
+   return (property==POSITION_COMMENT)?_FakeCmnt():"";
+}
+bool   Fake_PositionGetString(int property,string &value,int /*index*/=0){
+   value=(property==POSITION_COMMENT)?_FakeCmnt():"";
+   return true;
+}
+
+bool   Fake_PositionClose(ulong tk){
+   for(int i=0;i<fakeCnt;++i)
+      if(fakePos[i].tk==tk){ fakePos[i]=fakePos[--fakeCnt]; return true; }
+   return false;
+}
+
+/* Fake CTrade wrapper */
+class FakeTrade{
+public:
+   bool Buy (double,string,double,double,double,string){ return true; }
+   bool Sell(double,string,double,double,double,string){ return true; }
+   bool PositionClose(ulong tk){ return Fake_PositionClose(tk); }
+   void SetExpertMagicNumber(int) {}
+} trade_fake;
+#define trade trade_fake   // 本物を置換
+
+#endif // UNIT_TEST
 
 //――― Unit‑Test ビルド用フラグ
 //     ※ fake‑API マクロ置換より**前**に宣言しておくこと！
