@@ -5,6 +5,7 @@
 //+------------------------------------------------------------------+
 
 #property strict
+#define UNIT_TEST
 /*──────────────── Fake Position pool & API for UNIT_TEST ───────────────*/
 #ifdef UNIT_TEST
 
@@ -94,22 +95,14 @@ public:
 //     ※ fake‑API マクロ置換より**前**に宣言しておくこと！
 #define UNIT_TEST   // ★ここへ移動
 
-#ifdef UNIT_TEST
-#define PositionsTotal            Fake_PositionsTotal
-#define PositionGetTicket         Fake_PositionGetTicket
-#define PositionSelectByTicket    Fake_PositionSelectByTicket
-#define PositionGetDouble         Fake_PositionGetDouble
-#define PositionGetString         Fake_PositionGetString
-#define PositionGetInteger        Fake_PositionGetInteger
-#endif
-
-#include <Trade/Trade.mqh>
-CTrade trade;
+// ---- 本番用ライブラリは UT では読み込まない -----------------
+#ifndef UNIT_TEST
+   #include <Trade/Trade.mqh>
+   CTrade trade;            // ← 実運用時はこちらを使う
+#endif                      // --------------------------------
 
 
-#ifndef UNIT_TEST          // 二重定義ガード
-#define UNIT_TEST
-#endif
+
 //────────────────────────── Inputs ───────────────────────────────
 input string  InpSymbol       = "USDJPY";   // trading symbol
 input double  InpLot          = 0.01;        // lot size
@@ -165,13 +158,75 @@ static double startEquity = 0.0;
  void UpdateAlternateCols(int curRow,int dir,bool seed);
  void CheckWeightedClose();
 
-// ▼ Unit-Test 用 API（この 2 行だけ！） ▼
+// ▼ Unit-Test 用 API（この 2 行だけ！） -------------------------
 #ifdef UNIT_TEST
-void ResetAll()          export;   // 内部状態フルリセット
-void SimulateMove(int)   export;   // Row だけ渡して 1 ステップ再生
+void ResetAll()        export;   // 内部状態をすべてリセット
+void SimulateMove(int) export;   // 行番号を指定して 1 ステップ進める
 void SimulateHalfStep()  export;
-#endif
 
+//─────────────────────────────────────────────
+//  ★ Unit-Test helper bodies
+//─────────────────────────────────────────────
+#ifdef UNIT_TEST
+
+// ① すべての内部状態を最初の OnInit と同じ “真っさら” に戻す
+void ResetAll() export
+{
+   /*―― Fake ポジションプールを初期化 ――*/
+   fakeCnt = 0;
+   nextTk  = 1;
+   _fpIdx  = -1;
+
+   /*―― グローバル管理変数をリセット ――*/
+   GridSize   = InpGridSize;
+   basePrice  = rowAnchor = CurBidUT();
+   lastRow    = 0;
+   trendSign  = 0;
+   nextCol    = 1;
+   trendBCol  = 0;
+   trendSCol  = 0;
+   profit.active = false;
+   startEquity   = 0.0;
+
+   /*―― テーブル類をクリア ――*/
+   ClearColTab();
+   ArrayInitialize(altClosedRow, -9999);
+
+   /*―― TREND ペアを 0 行に建てる ――*/
+   colTab[1].id   = 1;  colTab[1].role = ROLE_TREND;
+   colTab[2].id   = 2;  colTab[2].role = ROLE_TREND;
+   trendBCol = 1;  trendSCol = 2;  nextCol = 3;
+
+   Place(ORDER_TYPE_BUY , trendBCol, 0);
+   Place(ORDER_TYPE_SELL, trendSCol, 0);
+}
+
+// ② 任意の行まで “1 行ずつ” シミュレートして動かす
+void SimulateMove(int targetRow) export
+{
+   if(targetRow == lastRow) return;
+   int dir = (targetRow > lastRow) ? +1 : -1;
+
+   for(int r = lastRow + dir; ; r += dir)
+   {
+      StepRow(r, dir);
+      if(r == targetRow) break;
+   }
+}
+
+// ③ 現在行のまま 0.5 グリッドだけ “半歩” 動かす
+void SimulateHalfStep() export
+{
+   rowAnchor += GridSize * 0.5;   // 中間まで動かす
+   UpdateFakeProfits();
+   CheckWeightedClose();          // 半歩位置でのみ発火を確認
+   rowAnchor -= GridSize * 0.5;   // 元に戻す
+   UpdateFakeProfits();
+}
+
+#endif  // UNIT_TEST helper bodies ここまで
+
+#endif
 //=============================================================
 //  ★ UT 専用　現在の擬似 Bid 価格を返す
 //=============================================================
@@ -713,110 +768,3 @@ void OnTick()
    CheckWeightedClose();
    CheckTargetEquity();
 }
-/*──────────────── Fake Position pool ───────────────*/
-\#ifdef UNIT\_TEST
-struct FakePos{
-ulong  tk;
-int    row;
-uint   col;
-double profit;
-int    dir;            // +1 Buy / ‑1 Sell
-};
-static FakePos fakePos\[8192];
-static int     fakeCnt = 0;
-static ulong   nextTk  = 1;
-static int     \_fpIdx  = -1;
-
-/*──────────────── Fake Position API (UNIT\_TEST) ───────────────
-Requirements:
-‑ Provide library‑compatible Position* functions with (property\[,index]) form
-‑ Provide string/bool overload for GetString
-‑ Keep single implementation, avoid duplicates
-‑ Must be compiled only when UNIT\_TEST defined
-\----------------------------------------------------------------\*/
-
-/\* ---------- forward prototypes ---------- \*/
-int    Fake\_PositionsTotal();
-ulong  Fake\_PositionGetTicket(int idx);
-bool   Fake\_PositionSelectByTicket(ulong tk);
-
-string Fake\_PositionGetString(int property,int index=0);
-bool   Fake\_PositionGetString(int property,string \&value,int index=0);
-double Fake\_PositionGetDouble(int property,int index=0);
-long   Fake\_PositionGetInteger(int property,int index=0);
-
-bool   Fake\_PositionClose(ulong tk);
-
-/\* ---------- macro remap so EA / libs call our fakes ---------- \*/
-\#define PositionsTotal            Fake\_PositionsTotal
-\#define PositionGetTicket         Fake\_PositionGetTicket
-\#define PositionSelectByTicket    Fake\_PositionSelectByTicket
-\#define PositionGetString         Fake\_PositionGetString
-\#define PositionGetDouble         Fake\_PositionGetDouble
-\#define PositionGetInteger        Fake\_PositionGetInteger
-\#define PositionClose             Fake\_PositionClose
-
-/\* ---------- implementation ---------- \*/
-int Fake\_PositionsTotal(){ return fakeCnt; }
-
-ulong Fake\_PositionGetTicket(int idx){ return fakePos\[idx].tk; }
-
-bool Fake\_PositionSelectByTicket(ulong tk)
-{
-for(int i=0;i\<fakeCnt;++i)
-if(fakePos\[i].tk==tk){ \_fpIdx=i; return true; }
-return false;
-}
-
-/\* helper: build comment string once \*/
-inline string \_FakeCmnt(){ return Cmnt(fakePos\[\_fpIdx].row,fakePos\[\_fpIdx].col); }
-
-/\* --- GetString overloads --- \*/
-string Fake\_PositionGetString(int property,int /*index*/=0)
-{
-return (property==POSITION\_COMMENT)?\_FakeCmnt():"";
-}
-
-bool Fake\_PositionGetString(int property,string \&value,int /*index*/=0)
-{
-value=(property==POSITION\_COMMENT)?\_FakeCmnt():"";
-return true;
-}
-
-/\* --- GetDouble --- \*/
-double Fake\_PositionGetDouble(int property,int /*index*/=0)
-{
-return (property==POSITION\_PROFIT)?fakePos\[\_fpIdx].profit:0.0;
-}
-
-/\* --- GetInteger --- \*/
-long Fake\_PositionGetInteger(int property,int /*index*/=0)
-{
-switch(property)
-{
-case POSITION\_MAGIC: return InpMagic;
-case POSITION\_TYPE:  return (fakePos\[\_fpIdx].dir>0)?POSITION\_TYPE\_BUY\:POSITION\_TYPE\_SELL;
-}
-return 0;
-}
-
-/\* --- PositionClose --- \*/
-bool Fake\_PositionClose(ulong tk)
-{
-for(int i=0;i\<fakeCnt;++i)
-if(fakePos\[i].tk==tk){ fakePos\[i]=fakePos\[--fakeCnt]; return true; }
-return false;
-}
-
-/*──────────────── Fake CTrade ラッパ ───────────────*/
-class FakeTrade{
-public:
-bool Buy (double,string,double,double,double,string){ return true; }
-bool Sell(double,string,double,double,double,string){ return true; }
-bool PositionClose(ulong tk){ return Fake\_PositionClose(tk); }
-void SetExpertMagicNumber(int) {}
-} trade\_fake;
-
-\#define trade trade\_fake   // ← 本物を完全に置換
-
-\#endif // UNIT\_TEST
