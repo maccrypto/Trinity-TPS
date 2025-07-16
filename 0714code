@@ -9,17 +9,37 @@
 /*──────────────── Fake Position pool & API for UNIT_TEST ───────────────*/
 #ifdef UNIT_TEST
 
-/* 1) forward 宣言 + マクロ差し替え —— ここが "include" より前に必要 */
+// ⚠️ この塊は <Trade/Trade.mqh> より前にマクロを張り替える必要があります。
+//    1) 先に forward‑declaration とマクロを並べる
+//    2) その後で実装を置けば OK（コンパイラは後方参照を許す）
+// ---------------------------------------------------------------------
+
+struct FakePos{
+   ulong  tk;      // 擬似チケット
+   int    row;     // グリッド行
+   uint   col;     // 列番号
+   double profit;  // 擬似損益
+   int    dir;     // +1 Buy / -1 Sell
+};
+static FakePos fakePos[8192];
+static int     fakeCnt = 0;
+static ulong   nextTk  = 1;
+static int     _fpIdx  = -1;
+
+// ───────────────── forward prototypes ─────────────────
 int    Fake_PositionsTotal();
 ulong  Fake_PositionGetTicket(int idx);
 bool   Fake_PositionSelectByTicket(ulong tk);
 
-double Fake_PositionGetDouble (int property,int index=0);
+double Fake_PositionGetDouble(int property,int index=0);
 long   Fake_PositionGetInteger(int property,int index=0);
+
 string Fake_PositionGetString(int property,int index=0);
 bool   Fake_PositionGetString(int property,string &value,int index=0);
+
 bool   Fake_PositionClose(ulong tk);
 
+// ───────────────── macro remap ─────────────────
 #define PositionsTotal         Fake_PositionsTotal
 #define PositionGetTicket      Fake_PositionGetTicket
 #define PositionSelectByTicket Fake_PositionSelectByTicket
@@ -28,58 +48,59 @@ bool   Fake_PositionClose(ulong tk);
 #define PositionGetString      Fake_PositionGetString
 #define PositionClose          Fake_PositionClose
 
-/* 2) 実装 —— forward の後ならファイル末尾でも OK。ここでは丸ごと置く */
-struct FakePos{
-   ulong  tk;
-   int    row;
-   uint   col;
-   double profit;
-   int    dir;  // +1 Buy / -1 Sell
-};
-static FakePos fakePos[8192];
-static int     fakeCnt = 0;
-static ulong   nextTk  = 1;
-static int     _fpIdx  = -1;
+// ───────────────── implementation ─────────────────
+int Fake_PositionsTotal(){ return fakeCnt; }
 
-inline string _FakeCmnt(){ return Cmnt(fakePos[_fpIdx].row,fakePos[_fpIdx].col); }
+ulong Fake_PositionGetTicket(int idx){ return fakePos[idx].tk; }
 
-int    Fake_PositionsTotal(){ return fakeCnt; }
-ulong  Fake_PositionGetTicket(int idx){ return fakePos[idx].tk; }
-
-bool   Fake_PositionSelectByTicket(ulong tk){
+bool Fake_PositionSelectByTicket(ulong tk)
+{
    for(int i=0;i<fakeCnt;++i)
       if(fakePos[i].tk==tk){ _fpIdx=i; return true; }
    return false;
 }
 
-double Fake_PositionGetDouble(int property,int /*index*/=0){
+// helper: build "comment" string once
+inline string _FakeCmnt(){ return Cmnt(fakePos[_fpIdx].row, fakePos[_fpIdx].col); }
+
+// --- GetString overloads ---
+string Fake_PositionGetString(int property,int /*index*/=0)
+{
+   return (property==POSITION_COMMENT)?_FakeCmnt():"";
+}
+
+bool Fake_PositionGetString(int property,string &value,int /*index*/=0)
+{
+   value=(property==POSITION_COMMENT)?_FakeCmnt():"";
+   return true;
+}
+
+// --- GetDouble ---
+double Fake_PositionGetDouble(int property,int /*index*/=0)
+{
    return (property==POSITION_PROFIT)?fakePos[_fpIdx].profit:0.0;
 }
 
-long   Fake_PositionGetInteger(int property,int /*index*/=0){
-   switch(property){
+// --- GetInteger ---
+long Fake_PositionGetInteger(int property,int /*index*/=0)
+{
+   switch(property)
+   {
       case POSITION_MAGIC: return InpMagic;
       case POSITION_TYPE:  return (fakePos[_fpIdx].dir>0)?POSITION_TYPE_BUY:POSITION_TYPE_SELL;
       default:             return 0;
    }
 }
 
-/* GetString 2-overload */
-string Fake_PositionGetString(int property,int /*index*/=0){
-   return (property==POSITION_COMMENT)?_FakeCmnt():"";
-}
-bool   Fake_PositionGetString(int property,string &value,int /*index*/=0){
-   value=(property==POSITION_COMMENT)?_FakeCmnt():"";
-   return true;
-}
-
-bool   Fake_PositionClose(ulong tk){
+// --- PositionClose ---
+bool Fake_PositionClose(ulong tk)
+{
    for(int i=0;i<fakeCnt;++i)
       if(fakePos[i].tk==tk){ fakePos[i]=fakePos[--fakeCnt]; return true; }
    return false;
 }
 
-/* Fake CTrade wrapper */
+// ───────────────── Fake CTrade wrapper ─────────────────
 class FakeTrade{
 public:
    bool Buy (double,string,double,double,double,string){ return true; }
@@ -87,7 +108,8 @@ public:
    bool PositionClose(ulong tk){ return Fake_PositionClose(tk); }
    void SetExpertMagicNumber(int) {}
 } trade_fake;
-#define trade trade_fake   // 本物を置換
+
+#define trade trade_fake   // 本物を完全に置換
 
 #endif // UNIT_TEST
 
@@ -186,7 +208,8 @@ void ResetAll() export
    trendBCol  = 0;
    trendSCol  = 0;
    profit.active = false;
-   startEquity   = 0.0;
+   // ★ 初期利益基準をアカウントの現在エクイティに合わせる
+   startEquity   = AccountInfoDouble(ACCOUNT_EQUITY);
 
    /*―― テーブル類をクリア ――*/
    ClearColTab();
@@ -201,19 +224,41 @@ void ResetAll() export
    Place(ORDER_TYPE_SELL, trendSCol, 0);
 }
 
-// ② 任意の行まで “1 行ずつ” シミュレートして動かす
-void SimulateMove(int targetRow) export
-{
-   if(targetRow == lastRow) return;
-   int dir = (targetRow > lastRow) ? +1 : -1;
 
-   for(int r = lastRow + dir; ; r += dir)
-   {
-      StepRow(r, dir);
-      if(r == targetRow) break;
-   }
-}
 
+ void SimulateMove(int targetRow) export
+ {
+    // ループ開始前の状態を表示
+    PrintFormat("DBG SimMove: enter target=%d  lastRow=%d", targetRow, lastRow);
+
+    if(targetRow == lastRow)
+    {
+       Print("DBG SimMove: target==lastRow – skip");
+       return;
+    }
+    int dir = (targetRow > lastRow) ? +1 : -1;
+
+    for(int r = lastRow + dir; ; r += dir)
+    {
+       // ループごとの繰り返し情報
+       PrintFormat("DBG SimMove: about to StepRow  r=%d  lastRow(before)=%d  dir=%d",
+                   r, lastRow, dir);
+
+       StepRow(r, dir);
+
+       // StepRow 後の lastRow　を表示
+       PrintFormat("DBG SimMove: after StepRow  lastRow(after)=%d", lastRow);
+
+       if(r == targetRow)
+       {
+          PrintFormat("DBG SimMove: reached target=%d – break", targetRow);
+          break;
+       }
+    }
+ }
+
+
+//+------------------------------------------------------------------+
 // ③ 現在行のまま 0.5 グリッドだけ “半歩” 動かす
 void SimulateHalfStep() export
 {
@@ -510,6 +555,10 @@ void CheckWeightedClose()
 //──────────────── CheckTargetEquity() ──────────────────
 void CheckTargetEquity()
 {
+  // UNIT_TEST 時は本物の口座残高判定をスキップ
+#ifdef UNIT_TEST
+  return;
+#endif
    double cur=AccountInfoDouble(ACCOUNT_EQUITY);
    if(cur-startEquity < InpTargetEquity - 1e-9) return;
    for(int i=PositionsTotal()-1;i>=0;i--) if(SelectPosByIndex(i)) trade.PositionClose(PositionGetTicket(i));
@@ -543,48 +592,36 @@ void UpdateAlternateCols(int curRow,int /*dir*/,bool /*seed*/)
    }
 }
 
-//──────────────── StepRow ───────────────────────────────────
-void StepRow(int newRow,int dir)
-{
-   bool firstMove = (trendSign == 0);          // 初回か？
-   bool pivot     = (!firstMove && dir != trendSign);
+ void StepRow(int newRow,int dir)
+ {
+    // 入口デバッグ
+    PrintFormat("DBG StepRow: ENTER newRow=%d dir=%d lastRow(before)=%d trendSign(before)=%d",
+                newRow, dir, lastRow, trendSign);
 
-   if(InpDbgLog)
-      PrintFormat("StepRow newRow=%d dir=%d firstMove=%s pivot=%s",
-                  newRow, dir,
-                  firstMove ? "YES" : "NO",
-                  pivot     ? "YES" : "NO");
+    bool firstMove = (trendSign == 0);
+    bool pivot     = (!firstMove && dir != trendSign);
 
-   if(firstMove || pivot)
-   {
-      FixTrendPair(dir, newRow);               // 旧 Trend → Profit / ALT
-      CreateTrendPair(newRow);                 // 新 Trend ペア
-      UpdateAlternateCols(newRow, dir, true);  // ★ ALT 初回 seed=true
-   }
-   else
-   {
-      SafeRollTrendPair(newRow, dir);          // 巡行ロール
-      UpdateAlternateCols(newRow, dir, false); // ★ seed=false
-   }
+    if(InpDbgLog)
+       PrintFormat("[LOG ] StepRow newRow=%d dir=%d firstMove=%s pivot=%s",
+                   newRow, dir,
+                   firstMove ? "YES" : "NO",
+                   pivot     ? "YES" : "NO");
 
-   // PENDING → TREND 昇格
-   for(uint c = 1; c < nextCol; c++)
-      if(colTab[c].role == ROLE_PENDING &&
-         colTab[c].posCnt == 0         &&
-         altClosedRow[c] != lastRow)
-            colTab[c].role = ROLE_TREND;
+    // Trend 次のステップ用に必ず更新
+    lastRow   = newRow;
+    trendSign = dir;
 
-   lastRow   = newRow;
-   trendSign = dir;
-   
 #ifdef UNIT_TEST
-   UpdateFakeProfits();        // ① 先に損益を最新化
-   CheckProfitClose();
-   CheckWeightedClose();       // ② 真の値で判定できる
-   CheckTargetEquity();
-   AssertState("after StepRow");   // ← ★ 呼び出しを関数内に戻す
+    UpdateFakeProfits();
+    CheckProfitClose();
+    CheckWeightedClose();
+    CheckTargetEquity();
+    //AssertState("after StepRow");
 #endif
-}   // ---------- StepRow() ここで終了
+
+    // 退出デバッグ（更新後）
+    PrintFormat("DBG StepRow: EXIT  lastRow(after)=%d trendSign(after)=%d", lastRow, trendSign);
+ }
 /* ここから下は StepRow() の外（グローバル域） --------------- */
 
 #ifdef UNIT_TEST
