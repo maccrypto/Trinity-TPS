@@ -431,7 +431,8 @@ if(!profit.active)
 /*―― ALT 列を初期化 ――*/
 colTab[altCol].role      = ROLE_ALT;
 colTab[altCol].altRefRow = lastRow;   // ★必ずセット
-colTab[altCol].altRefDir = dir;       // +1 = Buy / -1 = Sell
+// 初回エントリー方向を、実際に Place() でセットされた lastDir から取る
+colTab[altCol].altRefDir = colTab[altCol].lastDir;
 
 altBCol = altCol;       // ペア 1 本目 (ALT)
 altSCol = profitCol;    // ペア 2 本目 (Profit)
@@ -532,10 +533,11 @@ void CheckWeightedClose()
          PrintFormat("[W-C] col=%u n=%d sum=%.2f refRow=%d lastRow=%d",
                      c, n, sum, colTab[c].altRefRow, lastRow);
 
-
-     // ② 発火条件：奇数本かつ profit 合計がほぼゼロ
-     if(n >= 3 && (n & 1) &&
-        MathAbs(sum) < 1e-9)
+     // ② 発火条件：奇数本かつ pivot からの距離＝(n−1)/2 かつ profit 合計ゼロ
+     if(n >= 3 
+        && (n & 1) 
+        && MathAbs(lastRow - colTab[c].altRefRow) == (n - 1) / 2 
+        && MathAbs(sum) < 1e-9)
       {
          // 全クローズ
          for(int k = 0; k < n; ++k)
