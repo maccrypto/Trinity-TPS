@@ -396,48 +396,43 @@ int idx   = fakeCnt++;                    // 要素番号を確保
    return true;
 }
 
-//──────────────── Trend helpers ─────────────────────────────────
+//──────────────── Trend-pair 作成ヘルパー ────────────────────────
 void CreateTrendPair(int row)
 {
-   uint b=nextCol++, s=nextCol++;
-   colTab[b].id=b; colTab[b].role=ROLE_TREND;
-   colTab[s].id=s; colTab[s].role=ROLE_TREND;
-   trendBCol=b; trendSCol=s;
-   Place(ORDER_TYPE_BUY ,b,row);
-   Place(ORDER_TYPE_SELL,s,row);
-}
-//──────────────── FixTrendPair ──────────────────────────────
-//  dir>0 : 上昇 Pivot  → profitCol = trendBCol（Buy 側）
-//  dir<0 : 下降 Pivot  → profitCol = trendSCol（Sell 側）
-void FixTrendPair(int dir,int curRow)
-{
-  //―― TrendPair 処理 --------------------------------------------------
-if(trendBCol==0 || trendSCol==0)  return;   // ペア未成立
-
-const uint profitCol = (dir>0) ? trendBCol : trendSCol;   // 利確列
-const uint altCol    = (dir>0) ? trendSCol : trendBCol;   // ALT列
-
-/*―― Profit 列を凍結 ――*/
-if(!profit.active)
-{
-   colTab[profitCol].role = ROLE_PROFIT;
-
-   profit.active     = true;
-   profit.profitCol  = profitCol;
-   profit.rebuildCol = altCol;    // 初回のみ固定
-   profit.refRow     = lastRow;   // 基準行
+   // 次の２列をトレンドペアとして予約
+   uint b = nextCol++;
+   uint s = nextCol++;
+   colTab[b].id   = b;  colTab[b].role = ROLE_TREND;
+   colTab[s].id   = s;  colTab[s].role = ROLE_TREND;
+   trendBCol = b;  trendSCol = s;
+   // 実際のオーダーを発注
+   Place(ORDER_TYPE_BUY ,  b, row);
+   Place(ORDER_TYPE_SELL, s, row);
 }
 
-/*―― ALT 列を初期化 ――*/
-colTab[altCol].role      = ROLE_ALT;
-colTab[altCol].altRefRow = lastRow;   // ★必ずセット
-// 初回エントリー方向を、実際に Place() でセットされた lastDir から取る
-colTab[altCol].altRefDir = colTab[altCol].lastDir;
+//──────────────── Row step ──────────────────────────────────────
+void StepRow(int newRow, int dir)
+{
+   bool pivot = (trendSign != 0 && dir != trendSign);
+   if(InpDbgLog)
+      PrintFormat("StepRow newRow=%d dir=%d pivot=%s",
+                  newRow, dir, pivot ? "YES" : "NO");
 
-altBCol = altCol;       // ペア 1 本目 (ALT)
-altSCol = profitCol;    // ペア 2 本目 (Profit)
+   // pivot または 最初のエントリーならトレンドペアを更新／新規作成
+   if(pivot || trendSign == 0)
+   {
+      FixTrendPair(dir, newRow);    // 既存ペアを PROFIT/ALT に振り分け
+      CreateTrendPair(newRow);      // 新しいトレンドペアを発注
+   }
+   else
+   {
+      SafeRollTrendPair(newRow, dir); // トレンド継続ならロールオーバー
+   }
 
-//―― TrendPair 終了 --------------------------------------------------
+   // 以下略：各種クローズ処理や再帰ステップ
+   CheckProfitClose();
+   CheckWeightedClose();
+   CheckTargetEquity();
 }
 
 //──────────────── SafeRollTrendPair ─────────────────────────────────
