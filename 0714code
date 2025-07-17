@@ -532,9 +532,10 @@ void CheckWeightedClose()
          PrintFormat("[W-C] col=%u n=%d sum=%.2f refRow=%d lastRow=%d",
                      c, n, sum, colTab[c].altRefRow, lastRow);
 
-      // ② 発火条件：奇数本かつ pivot±((n-1)/2) 行
-      if(n >= 3 && (n & 1) &&
-         MathAbs(lastRow - colTab[c].altRefRow) == (n - 1) / 2)
+
+     // ② 発火条件：奇数本かつ profit 合計がほぼゼロ
+     if(n >= 3 && (n & 1) &&
+        MathAbs(sum) < 1e-9)
       {
          // 全クローズ
          for(int k = 0; k < n; ++k)
