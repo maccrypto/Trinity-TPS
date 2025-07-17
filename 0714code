@@ -179,7 +179,7 @@ static double startEquity = 0.0;
 // Forward-declarations ──────────────────
  void UpdateAlternateCols(int curRow,int dir,bool seed);
  void CheckWeightedClose();
-
+ void FixTrendPair(int dir, int row);
 // ▼ Unit-Test 用 API（この 2 行だけ！） -------------------------
 #ifdef UNIT_TEST
 void ResetAll()        export;   // 内部状態をすべてリセット
@@ -215,15 +215,25 @@ void ResetAll() export
    ClearColTab();
    ArrayInitialize(altClosedRow, -9999);
 
-   /*―― TREND ペアを 0 行に建てる ――*/
-   colTab[1].id   = 1;  colTab[1].role = ROLE_TREND;
-   colTab[2].id   = 2;  colTab[2].role = ROLE_TREND;
-   trendBCol = 1;  trendSCol = 2;  nextCol = 3;
-
-   Place(ORDER_TYPE_BUY , trendBCol, 0);
-   Place(ORDER_TYPE_SELL, trendSCol, 0);
+   // TREND ペアの初期シード
+   //    dir は初期なので使いませんが、2 引数版に合わせて 0, 0 を渡します
+   FixTrendPair(0, 0);
 }
 
+//─────────────────────────────────────────
+// TREND ペアを指定行で組むヘルパー関数
+//─────────────────────────────────────────
+void FixTrendPair(int dir, int row)
+{
+   colTab[1].id   = 1;  colTab[1].role = ROLE_TREND;
+   colTab[2].id   = 2;  colTab[2].role = ROLE_TREND;
+   trendBCol = 1;
+   trendSCol = 2;
+   nextCol   = 3;
+
+   Place(ORDER_TYPE_BUY , trendBCol, row);
+   Place(ORDER_TYPE_SELL, trendSCol, row);
+}
 
 
  void SimulateMove(int targetRow) export
@@ -589,38 +599,6 @@ void UpdateAlternateCols(int curRow,int /*dir*/,bool /*seed*/)
       Place(ot, c, curRow, isFirst);
    }
 }
-
- void StepRow(int newRow,int dir)
- {
-    // 入口デバッグ
-    PrintFormat("DBG StepRow: ENTER newRow=%d dir=%d lastRow(before)=%d trendSign(before)=%d",
-                newRow, dir, lastRow, trendSign);
-
-    bool firstMove = (trendSign == 0);
-    bool pivot     = (!firstMove && dir != trendSign);
-
-    if(InpDbgLog)
-       PrintFormat("[LOG ] StepRow newRow=%d dir=%d firstMove=%s pivot=%s",
-                   newRow, dir,
-                   firstMove ? "YES" : "NO",
-                   pivot     ? "YES" : "NO");
-
-    // Trend 次のステップ用に必ず更新
-    lastRow   = newRow;
-    trendSign = dir;
-
-#ifdef UNIT_TEST
-    UpdateFakeProfits();
-    CheckProfitClose();
-    CheckWeightedClose();
-    CheckTargetEquity();
-    //AssertState("after StepRow");
-#endif
-
-    // 退出デバッグ（更新後）
-    PrintFormat("DBG StepRow: EXIT  lastRow(after)=%d trendSign(after)=%d", lastRow, trendSign);
- }
-/* ここから下は StepRow() の外（グローバル域） --------------- */
 
 #ifdef UNIT_TEST
 //─── ダミー損益を毎ステップ更新 ─────────────────
