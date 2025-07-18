@@ -419,7 +419,6 @@ void CreateTrendPair(int row)
    Place(ORDER_TYPE_BUY ,  b, row);
    Place(ORDER_TYPE_SELL, s, row);
 }
-
 //──────────────── Row step ──────────────────────────────────────
 void StepRow(int newRow, int dir)
 {
@@ -439,7 +438,7 @@ void StepRow(int newRow, int dir)
       SafeRollTrendPair(newRow, dir); // トレンド継続ならロールオーバー
    }
 
-   // 以下略：各種クローズ処理や再帰ステップ
+   // 各種決済チェック
    CheckProfitClose();
    CheckWeightedClose();
    CheckTargetEquity();
