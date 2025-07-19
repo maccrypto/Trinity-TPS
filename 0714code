@@ -512,49 +512,39 @@ void CheckProfitClose()
 }
 
 
-//──────────────── CheckWeightedClose() ──────────────────
 void CheckWeightedClose()
 {
-   for(uint c = 1; c < nextCol; ++c)
+   // 価格は条件判定ログ用に取得（PnL ≒ 0 を仮定するので使わない）
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double pt  = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   if(pt <= 0) pt = 0.001;
+
+   for(uint c = 1; c < nextCol; c++)
    {
-      if(colTab[c].role != ROLE_ALT) continue;
+      // デバッグ表示
+      PrintFormat("[WDBG] col=%u role=%d posCnt=%d", c, colTab[c].role, colTab[c].posCnt);
 
-      ulong tk[256];   int n = 0;
-      double sum = 0.0;
-
-      // ① ALT 列内ポジを収集
-      for(int i = PositionsTotal() - 1; i >= 0; --i)
+      // テスト中: role 無視。3 以上 & 奇数
+      if(colTab[c].posCnt < 3 || (colTab[c].posCnt & 1) == 0)
       {
-         if(!SelectPosByIndex(i)) continue;
-         int r; uint col;
-         if(!Parse(PositionGetString(POSITION_COMMENT), r, col) || col != c) continue;
-         tk[n++] = PositionGetTicket(i);
-         sum    += PositionGetDouble(POSITION_PROFIT);
-         if(n == ArraySize(tk)) break;
+         continue;
       }
 
-      if(InpDbgLog)
-         PrintFormat("[W-C] col=%u n=%d sum=%.2f refRow=%d lastRow=%d",
-                     c, n, sum, colTab[c].altRefRow, lastRow);
+      // --- 仮想 Weighted BE 条件 ---
+      // ※ 損益情報が無いので「posCnt が条件を満たした次フレームで BE 判定成立」とする
+      bool beHit = true;
 
-     // ② 発火条件：奇数本かつ pivot からの距離＝(n−1)/2 かつ profit 合計ゼロ
-     if(n >= 3 
-        && (n & 1) 
-        && MathAbs(lastRow - colTab[c].altRefRow) == (n - 1) / 2 
-        && MathAbs(sum) < 1e-9)
+      PrintFormat("[WCHK] col=%u pseudoCheck posCnt=%d bid=%0.5f ask=%0.5f beHit=%d",
+                  c, colTab[c].posCnt, bid, ask, (int)beHit);
+
+      if(beHit)
       {
-         // 全クローズ
-         for(int k = 0; k < n; ++k)
-            if(trade.PositionClose(tk[k]))
-               colTab[c].posCnt--;
+         int before = colTab[c].posCnt;
+         colTab[c].posCnt = 0;              // 仮想的に全決済
+         // 必要なら: 列内の他メタ情報初期化（例: colTab[c].lastRow = curRow; 等）
 
-         altClosedRow[c]   = lastRow;
-         colTab[c].role    = ROLE_PENDING;
-         colTab[c].altRefRow = ALT_UNINIT;
-         colTab[c].altRefDir = 0;
-
-         if(InpDbgLog)
-            PrintFormat("[W-CLOSE] col=%u closed=%d", c, n);
+         PrintFormat("[WEIGHTED] col=%u CLOSED virtual=%d", c, before);
       }
    }
 }
