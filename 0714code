@@ -223,50 +223,35 @@ void ResetAll() export
 //─────────────────────────────────────────
 // TREND ペアを指定行で組むヘルパー関数
 //─────────────────────────────────────────
-void FixTrendPair(int dir, int row)
+//--- FixTrendPair: 方向初期化 or Pivot 時にトレンド列を再ラベル／再配置
+void FixTrendPair(const int dir, const int row)
 {
-   colTab[1].id   = 1;  colTab[1].role = ROLE_TREND;
-   colTab[2].id   = 2;  colTab[2].role = ROLE_TREND;
+   // 進入ログ（リセット抑止デバッグ）
+   PrintFormat("[FIX] enter FixTrendPair dir=%d row=%d nextCol(before)=%u trendSign=%d",
+               dir, row, nextCol, trendSign);
+
+   // 既存トレンド列を 1(BUY) / 2(SELL) に再マップ
    trendBCol = 1;
    trendSCol = 2;
-   nextCol   = 3;
+   colTab[trendBCol].id   = trendBCol;
+   colTab[trendBCol].role = ROLE_TREND;
+   colTab[trendSCol].id   = trendSCol;
+   colTab[trendSCol].role = ROLE_TREND;
 
+   // ★ 以前は nextCol = 3; などで“常に”リセットしていた想定
+   // 既に拡張済み（nextCol >= 3）なら壊さない。初回だけ初期値保障。
+   if(nextCol < 3)
+      nextCol = 3;
+
+   // 初回だけ列クリア等の重い初期化をしたい場合はここに条件付きで置く:
+   // if(trendSign == 0) { /* 初回のみの初期化処理 (必要なら) */ }
+
+   // 現在の行へトレンド列を再配置
    Place(ORDER_TYPE_BUY , trendBCol, row);
    Place(ORDER_TYPE_SELL, trendSCol, row);
+
+   PrintFormat("[FIX] leave FixTrendPair nextCol(after)=%u", nextCol);
 }
-
-
- void SimulateMove(int targetRow) export
- {
-    // ループ開始前の状態を表示
-    PrintFormat("DBG SimMove: enter target=%d  lastRow=%d", targetRow, lastRow);
-
-    if(targetRow == lastRow)
-    {
-       Print("DBG SimMove: target==lastRow – skip");
-       return;
-    }
-    int dir = (targetRow > lastRow) ? +1 : -1;
-
-    for(int r = lastRow + dir; ; r += dir)
-    {
-       // ループごとの繰り返し情報
-       PrintFormat("DBG SimMove: about to StepRow  r=%d  lastRow(before)=%d  dir=%d",
-                   r, lastRow, dir);
-
-       StepRow(r, dir);
-
-       // StepRow 後の lastRow　を表示
-       PrintFormat("DBG SimMove: after StepRow  lastRow(after)=%d", lastRow);
-
-       if(r == targetRow)
-       {
-          PrintFormat("DBG SimMove: reached target=%d – break", targetRow);
-          break;
-       }
-    }
- }
-
 
 //+------------------------------------------------------------------+
 // ③ 現在行のまま 0.5 グリッドだけ “半歩” 動かす
@@ -419,26 +404,32 @@ void CreateTrendPair(int row)
    Place(ORDER_TYPE_BUY ,  b, row);
    Place(ORDER_TYPE_SELL, s, row);
 }
-//──────────────── Row step ──────────────────────────────────────
-void StepRow(int newRow, int dir)
+//--- StepRow: 行遷移ハンドラ（Pivot/通常ロール＋決済チェック）
+void StepRow(const int newRow, const int dir)
 {
+   // Pivot 判定：過去方向が確定済み(trendSign!=0) かつ 逆方向
    bool pivot = (trendSign != 0 && dir != trendSign);
-   if(InpDbgLog)
-      PrintFormat("StepRow newRow=%d dir=%d pivot=%s",
-                  newRow, dir, pivot ? "YES" : "NO");
 
-   // pivot または 最初のエントリーならトレンドペアを更新／新規作成
+   // デバッグログ（必要なら InpDbgLog 条件で囲んで可）
+   PrintFormat("StepRow newRow=%d dir=%d pivot=%s", newRow, dir, pivot ? "YES" : "NO");
+
    if(pivot || trendSign == 0)
    {
-      FixTrendPair(dir, newRow);    // 既存ペアを PROFIT/ALT に振り分け
-      CreateTrendPair(newRow);      // 新しいトレンドペアを発注
+      // 初回 or 方向転換時のみトレンドペア再構築
+      FixTrendPair(dir, newRow);     // 既存トレンド列の再ラベル／再配置（内部で nextCol リセットしないよう既に修正想定）
+      CreateTrendPair(newRow);       // 新トレンド列追加（列増殖の起点）
+      trendSign = dir;               // 方向を確定（以後通常ロールに入れる）
    }
    else
    {
-      SafeRollTrendPair(newRow, dir); // トレンド継続ならロールオーバー
+      // 方向継続：既存トレンド列のロール処理（列リセットを行わない）
+      SafeRollTrendPair(newRow, dir);
    }
 
-   // 各種決済チェック
+   // 行状態を必ず更新（これが無いと lastRow が 0 固定になり無限初期化）
+   lastRow = newRow;
+
+   // 決済系チェック（順序は現行踏襲）
    CheckProfitClose();
    CheckWeightedClose();
    CheckTargetEquity();
