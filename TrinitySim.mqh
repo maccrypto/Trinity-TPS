@@ -1,14 +1,16 @@
-//--- TrinitySim.mqh  (新規作成)
-// シミュレーション補助関数群。EA と Replay スクリプト双方で共有。
+//--- TrinitySim.mqh : シミュレーション補助関数群（Include 方式）
 
 #ifndef __TRINITY_SIM_MQH__
 #define __TRINITY_SIM_MQH__
 
-// ここで lastRow, StepRow が他ファイルで宣言済み前提。
-// もしコンパイル順で未宣言なら extern 宣言を追加:
-// extern int lastRow;
-// void StepRow(const int newRow, const int dir);
+// 他ファイル（Trinity.mq5）側で定義済みのグローバル / 関数を参照。
+// 未定義エラーが出る場合のみコメントアウトを外して使用してください。
+extern int  lastRow;                 // Trinity.mq5 で実体を持つこと
+void StepRow(const int newRow, const int dir);  // StepRow 本体は Trinity.mq5 側
 
+//==================================================================
+// SimulateMove: 指定 targetRow まで lastRow を 1 行ずつ進め StepRow を呼ぶ
+//==================================================================
 void SimulateMove(const int targetRow)
 {
    PrintFormat("DBG SimMove: enter target=%d  lastRow=%d", targetRow, lastRow);
@@ -20,16 +22,16 @@ void SimulateMove(const int targetRow)
       return;
    }
 
-   int dir = (targetRow > lastRow ? 1 : -1);
-   int safety = 100;
+   const int dir = (targetRow > lastRow ? 1 : -1);
+   int safety    = 100;
 
    while(lastRow != targetRow && safety-- > 0)
    {
-      int next = lastRow + dir;
+      const int next = lastRow + dir;
       PrintFormat("DBG SimMove: about to StepRow  r=%d  lastRow(before)=%d  dir=%d",
                   next, lastRow, dir);
 
-      StepRow(next, dir);
+      StepRow(next, dir);   // StepRow が内部で lastRow を更新する前提
 
       PrintFormat("DBG SimMove: after StepRow  lastRow(after)=%d", lastRow);
 
