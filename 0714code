@@ -5,6 +5,7 @@
 //+------------------------------------------------------------------+
 
 #property strict
+#include "TrinitySim.mqh"
 #define UNIT_TEST
 /*──────────────── Fake Position pool & API for UNIT_TEST ───────────────*/
 #ifdef UNIT_TEST
@@ -220,32 +221,6 @@ void ResetAll() export
    FixTrendPair(0, 0);
 }
 
-// 既に他の export と同じ領域（グローバル関数セクション）に置く
-export void SimulateMove(const int targetRow)
-{
-   PrintFormat("DBG SimMove: enter target=%d  lastRow=%d", targetRow, lastRow);
-   if(targetRow == lastRow)
-   {
-      PrintFormat("DBG SimMove: target==lastRow – skip");
-      return;
-   }
-   int dir = (targetRow > lastRow ? 1 : -1);
-   int safety = 100;
-   while(lastRow != targetRow && safety-- > 0)
-   {
-      int next = lastRow + dir;
-      PrintFormat("DBG SimMove: about to StepRow  r=%d  lastRow(before)=%d  dir=%d", next, lastRow, dir);
-      StepRow(next, dir);
-      PrintFormat("DBG SimMove: after StepRow  lastRow(after)=%d", lastRow);
-      if(lastRow == targetRow)
-      {
-         PrintFormat("DBG SimMove: reached target=%d – break", targetRow);
-         break;
-      }
-   }
-   if(safety <= 0 && lastRow != targetRow)
-      PrintFormat("DBG SimMove: SAFETY BREAK (lastRow=%d target=%d)", lastRow, targetRow);
-}
 
 //─────────────────────────────────────────
 // TREND ペアを指定行で組むヘルパー関数
