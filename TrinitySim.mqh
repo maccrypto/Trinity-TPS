@@ -1,16 +1,14 @@
-//--- TrinitySim.mqh : シミュレーション補助関数群（Include 方式）
-
+//--- TrinitySim.mqh : Simulation helper functions (include style)
 #ifndef __TRINITY_SIM_MQH__
 #define __TRINITY_SIM_MQH__
 
-// 他ファイル（Trinity.mq5）側で定義済みのグローバル / 関数を参照。
-// 未定義エラーが出る場合のみコメントアウトを外して使用してください。
-extern int  lastRow;                 // Trinity.mq5 で実体を持つこと
-void StepRow(const int newRow, const int dir);  // StepRow 本体は Trinity.mq5 側
+// Forward externs (real definitions are in Trinity.mq5)
+extern int  lastRow;
+void StepRow(const int newRow, const int dir);
 
-//==================================================================
-// SimulateMove: 指定 targetRow まで lastRow を 1 行ずつ進め StepRow を呼ぶ
-//==================================================================
+//------------------------------------------------------------------
+// SimulateMove: move lastRow stepwise toward targetRow calling StepRow
+//------------------------------------------------------------------
 void SimulateMove(const int targetRow)
 {
    PrintFormat("DBG SimMove: enter target=%d  lastRow=%d", targetRow, lastRow);
@@ -31,7 +29,7 @@ void SimulateMove(const int targetRow)
       PrintFormat("DBG SimMove: about to StepRow  r=%d  lastRow(before)=%d  dir=%d",
                   next, lastRow, dir);
 
-      StepRow(next, dir);   // StepRow が内部で lastRow を更新する前提
+      StepRow(next, dir);   // StepRow updates lastRow internally
 
       PrintFormat("DBG SimMove: after StepRow  lastRow(after)=%d", lastRow);
 
