@@ -181,7 +181,6 @@ struct ProfitInfo
 static ProfitInfo profit = { false, 0, 0, 0 };
 #define MAX_COL 2048
 static ColState colTab[MAX_COL + 2];
-static int      altClosedRow[MAX_COL + 2];
 
 static double GridSize;
 static double basePrice   = 0.0;
@@ -201,7 +200,6 @@ const int ALT_UNINIT = -2147483647;   // (= INT_MIN 相当)
 static double startEquity = 0.0;
 
 // Forward-declarations ──────────────────
- void UpdateAlternateCols(int dir,bool seed);
  void CheckWeightedClose();
  void FixTrendPair(int dir, int row);
 // ▼ Unit-Test 用 API（この 2 行だけ！） -------------------------
@@ -588,25 +586,16 @@ void CheckTargetEquity()
    Place(ORDER_TYPE_SELL,trendSCol,0);
    startEquity=cur;
 }
-//────────────────UpdateAlternateCols───────────────────────────────
-void UpdateAlternateCols(int curRow,int /*dir*/,bool /*seed*/)
-{
-   for(uint c=1; c<nextCol; ++c)
-   {
-      if(colTab[c].role != ROLE_ALT) continue;
-
-      const bool isFirst = (colTab[c].altRefRow == ALT_UNINIT        // ★まだ種玉無し
-                    || lastRow       == colTab[c].altRefRow);   // ★Pivot 行でだけ再シード
-      ENUM_ORDER_TYPE ot;
-
-      if(isFirst)
-         ot = (colTab[c].altRefDir > 0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
-      else
-         ot = AltDir(c,curRow);   // 交互継続
-
-      Place(ot, c, curRow, isFirst);
-   }
-}
+ void UpdateAlternateCols()
+ {
+     // グローバル curRow, dir, seed は不要。ここでは curRow を使ってループ
+     for(uint c = 1; c < nextCol; ++c)
+     {
+         if(colTab[c].role != ROLE_ALT) continue;
+         if(altClosedRow[c] == curRow) continue;  // 直前クローズ行はスキップ
+         Place(AltDir(c), c, curRow);
+     }
+ }
 
 #ifdef UNIT_TEST
 //─── ダミー損益を毎ステップ更新 ─────────────────
