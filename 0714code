@@ -5,7 +5,30 @@
 //+------------------------------------------------------------------+
 
 #property strict
-#include "TrinitySim.mqh"
+//#include "TrinitySim.mqh"
+int lastRow = 0;
+
+void StepRow(const int r, const int dir)
+{
+   lastRow = r;
+}
+
+void SimulateMove(const int targetRow)
+{
+   // パラメータ名 targetRow を与えることで “undeclared” を解消
+   if(targetRow == lastRow)
+      return;
+
+   int dir = (targetRow > lastRow ? 1 : -1);
+   int safety = 100;
+
+   while(lastRow != targetRow && safety-- > 0)
+   {
+      int next = lastRow + dir;
+      StepRow(next, dir);  // StepRow が lastRow を更新する前提
+   }
+}
+
 #define UNIT_TEST
 /*──────────────── Fake Position pool & API for UNIT_TEST ───────────────*/
 #ifdef UNIT_TEST
