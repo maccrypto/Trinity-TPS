@@ -1,38 +1,34 @@
 //+------------------------------------------------------------------+
-//|  Trinity.mq5  –  Generic Grid‑TPS Entry Core                    |
-//|  roll‑backed "stable" snapshot  (around 2024‑05‑27)             |
-//|  reconstructed 2025‑07‑06                                        |
+//|  Trinity.mq5  –  Generic Grid‑TPS Entry Core                     |
 //+------------------------------------------------------------------+
-
 #property strict
-#include "TrinitySim.mqh"
+#define UNIT_TEST
+#include <TrinitySim.mqh>
+//─── Replay / Weighted‑Close 用グローバル変数 ───
+int curRow = 0;               // 「現在の行」を保持
+// ※ altClosedRow は既に下で static int altClosedRow[MAX_COL+2]; で定義済みなので、ここでは定義しない
+
+static int altClosedRow[MAX_COL + 2];  // Weighted‑Close 発火済みの Row を列ごとに記録
+
 int lastRow = 0;
+int StepCount = 0;
 
 void StepRow(const int r, const int dir)
 {
    lastRow = r;
+   StepCount++;
 }
 
-//=====================================================
-// SimulateMove : lastRow から targetRow まで 1 行ずつ StepRow
-//=====================================================
 void SimulateMove(const int targetRow)
 {
-   // ---- パラメータ名が必須：これが無いと targetRow 未定義エラー ----
-   if(targetRow == lastRow)
-      return;
-
-   int dir = (targetRow > lastRow ? 1 : -1);
-   int safety = 200;
-
+   if(targetRow == lastRow) return;
+   const int dir = (targetRow > lastRow ? 1 : -1);
+   int safety = 400;
    while(lastRow != targetRow && safety-- > 0)
-   {
-      int next = lastRow + dir;
-      StepRow(next, dir);
-   }
-
-   // safety 0 で抜けても今は何もしない（必要ならログ追加）
+      StepRow(lastRow + dir, dir);
 }
+
+// （以下、既存の Fake API ブロック / 以降のロジックはそのまま）
 
 #define UNIT_TEST
 /*──────────────── Fake Position pool & API for UNIT_TEST ───────────────*/
@@ -144,7 +140,7 @@ public:
 
 //――― Unit‑Test ビルド用フラグ
 //     ※ fake‑API マクロ置換より**前**に宣言しておくこと！
-#define UNIT_TEST   // ★ここへ移動
+
 
 // ---- 本番用ライブラリは UT では読み込まない -----------------
 #ifndef UNIT_TEST
@@ -190,7 +186,6 @@ static int      altClosedRow[MAX_COL + 2];
 static double GridSize;
 static double basePrice   = 0.0;
 static double rowAnchor   = 0.0;
-static int    lastRow     = 0;
 static int    trendSign   = 0;      // +1 / -1 (0 = unknown)
 static uint   nextCol     = 1;
 static uint   trendBCol   = 0, trendSCol = 0;
@@ -211,9 +206,9 @@ static double startEquity = 0.0;
  void FixTrendPair(int dir, int row);
 // ▼ Unit-Test 用 API（この 2 行だけ！） -------------------------
 #ifdef UNIT_TEST
-void ResetAll()        export;   // 内部状態をすべてリセット
-void SimulateMove(int) export;   // 行番号を指定して 1 ステップ進める
-void SimulateHalfStep()  export;
+void ResetAll();         // ← export 削除
+void SimulateMove(const int targetRow); // 形式を本体と一致させる（※ただし本体が既に上にあるならこの行すら不要）
+void SimulateHalfStep();
 
 //─────────────────────────────────────────────
 //  ★ Unit-Test helper bodies
@@ -221,7 +216,7 @@ void SimulateHalfStep()  export;
 #ifdef UNIT_TEST
 
 // ① すべての内部状態を最初の OnInit と同じ “真っさら” に戻す
-void ResetAll() export
+void ResetAll()
 {
    /*―― Fake ポジションプールを初期化 ――*/
    fakeCnt = 0;
@@ -285,7 +280,7 @@ void FixTrendPair(const int dir, const int row)
 
 //+------------------------------------------------------------------+
 // ③ 現在行のまま 0.5 グリッドだけ “半歩” 動かす
-void SimulateHalfStep() export
+void SimulateHalfStep()
 {
    rowAnchor += GridSize * 0.5;   // 中間まで動かす
    UpdateFakeProfits();
@@ -434,16 +429,6 @@ void CreateTrendPair(int row)
    Place(ORDER_TYPE_BUY ,  b, row);
    Place(ORDER_TYPE_SELL, s, row);
 }
-//=====================================================
-// StepRow : 行を 1 ステップ進めて lastRow を更新
-// newRow : 進みたい行
-// dir    : +1 / -1 方向
-//=====================================================
-void StepRow(const int newRow, const int dir)
-{
-   // ここで元々のポジション管理・発注等をしていた処理があるなら後で戻す。
-   lastRow = newRow;
-}
 
 //──────────────── SafeRollTrendPair ─────────────────────────────────
 void SafeRollTrendPair(int curRow,int dir)
@@ -513,40 +498,69 @@ void CheckProfitClose()
 }
 
 
+//──────────────── Weighted‑Close (±0) ───────────────────────────
 void CheckWeightedClose()
 {
-   // 価格は条件判定ログ用に取得（PnL ≒ 0 を仮定するので使わない）
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double pt  = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   if(pt <= 0) pt = 0.001;
+   // テスト環境では CurBidUT() を使う想定
+   double bid = CurBidUT();
+   double ask = CurBidUT();
+   double eps = Point() * 10;  // 10 pips 相当の許容幅
 
    for(uint c = 1; c < nextCol; c++)
    {
-      // デバッグ表示
-      PrintFormat("[WDBG] col=%u role=%d posCnt=%d", c, colTab[c].role, colTab[c].posCnt);
-
-      // テスト中: role 無視。3 以上 & 奇数
-      if(colTab[c].posCnt < 3 || (colTab[c].posCnt & 1) == 0)
-      {
+      // ALT 列かつポジション数が奇数 3 以上のみ対象
+      if(colTab[c].role != ROLE_ALT || colTab[c].posCnt < 3 || (colTab[c].posCnt & 1) == 0)
          continue;
-      }
 
-      // --- 仮想 Weighted BE 条件 ---
-      // ※ 損益情報が無いので「posCnt が条件を満たした次フレームで BE 判定成立」とする
-      bool beHit = true;
+      double sumDir     = 0.0;
+      double sumDirOpen = 0.0;
 
-      PrintFormat("[WCHK] col=%u pseudoCheck posCnt=%d bid=%0.5f ask=%0.5f beHit=%d",
-                  c, colTab[c].posCnt, bid, ask, (int)beHit);
-
-      if(beHit)
+      // 列 c の全ポジションを集計
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
       {
-         int before = colTab[c].posCnt;
-         colTab[c].posCnt = 0;              // 仮想的に全決済
-         // 必要なら: 列内の他メタ情報初期化（例: colTab[c].lastRow = curRow; 等）
+         if(!SelectPosByIndex(i)) continue;
+         int r; uint col;
+         if(!Parse(PositionGetString(POSITION_COMMENT), r, col) || col != c) continue;
 
-         PrintFormat("[WEIGHTED] col=%u CLOSED virtual=%d", c, before);
+         double price = PositionGetDouble(POSITION_PRICE_OPEN);
+         double vol   = PositionGetDouble(POSITION_VOLUME);
+         int    type  = (int)PositionGetInteger(POSITION_TYPE);
+         double dir   = (type == POSITION_TYPE_BUY ? 1.0 : -1.0);
+
+         sumDir     += dir * vol;
+         sumDirOpen += dir * vol * price;
       }
+
+      // 現在の Bid/Ask で理論上の損益ゼロ判定
+      double px = (sumDir > 0.0 ? bid : ask);
+      if(MathAbs(sumDirOpen - sumDir * px) <= eps)
+      {
+         PrintFormat("[WEIGHTED] col=%u posCnt=%u px=%.5f",
+                     c, colTab[c].posCnt, px);
+
+         // 全クローズ＆ROLE_PENDING へリセット
+         CloseEntireCol(c);
+         colTab[c].posCnt     = 0;
+         colTab[c].role       = ROLE_PENDING;
+         colTab[c].altRefRow  = ALT_UNINIT;
+         altClosedRow[c]      = curRow;
+      }
+   }
+}
+
+//===== 補助関数: カラム内すべてのポジションを閉じる ==================
+void CloseEntireCol(uint col)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      if(!PositionGetTicket(i)) continue;
+      string cmt = PositionGetString(POSITION_COMMENT);
+      int r; uint c;
+      if(!Parse(cmt, r, c)) continue;
+      if(c != col) continue;
+
+      ulong ticket = PositionGetInteger(POSITION_TICKET);
+      trade.PositionClose(ticket);
    }
 }
 
