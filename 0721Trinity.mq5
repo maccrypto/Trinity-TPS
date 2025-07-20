@@ -4,11 +4,6 @@
 #property strict
 #define UNIT_TEST
 #include <TrinitySim.mqh>
-//─── Replay / Weighted‑Close 用グローバル変数 ───
-int curRow = 0;               // 「現在の行」を保持
-// ※ altClosedRow は既に下で static int altClosedRow[MAX_COL+2]; で定義済みなので、ここでは定義しない
-
-static int altClosedRow[MAX_COL + 2];  // Weighted‑Close 発火済みの Row を列ごとに記録
 
 int lastRow = 0;
 int StepCount = 0;
@@ -161,6 +156,11 @@ input bool    InpDbgLog       = true;        // verbose logging
 //────────────────────────── Types / Globals ──────────────────────
 enum ColRole { ROLE_PENDING, ROLE_PROFIT, ROLE_ALT, ROLE_TREND };
 
+#define MAX_COL 2048
+
+static int altClosedRow[MAX_COL + 2];  // ← これ１行だけ
+int       curRow = 0;                  // ← 必要ならここで１回だけ定義
+
 struct ColState
 {
    uint    id;
@@ -201,7 +201,7 @@ const int ALT_UNINIT = -2147483647;   // (= INT_MIN 相当)
 static double startEquity = 0.0;
 
 // Forward-declarations ──────────────────
- void UpdateAlternateCols(int curRow,int dir,bool seed);
+ void UpdateAlternateCols(int dir,bool seed);
  void CheckWeightedClose();
  void FixTrendPair(int dir, int row);
 // ▼ Unit-Test 用 API（この 2 行だけ！） -------------------------
@@ -431,27 +431,31 @@ void CreateTrendPair(int row)
 }
 
 //──────────────── SafeRollTrendPair ─────────────────────────────────
-void SafeRollTrendPair(int curRow,int dir)
+// ローカル curRow 引数を削除し、必ずグローバル curRow を使う
+void SafeRollTrendPair(int dir)
 {
-   int prevRow=curRow-dir;
-   for(int i=PositionsTotal()-1;i>=0;i--)
-   {
-      if(!SelectPosByIndex(i)) continue;
-      int r; uint c; if(!Parse(PositionGetString(POSITION_COMMENT),r,c)) continue;
-      if(r==prevRow
-    && (c==trendBCol || c==trendSCol))   // ← ALT 列を完全除外
-      {
-         ulong tk=PositionGetTicket(i);
-         if(trade.PositionClose(tk)) colTab[c].posCnt--;
-      }
-   }
-   Place(ORDER_TYPE_BUY ,trendBCol,curRow);
-   Place(ORDER_TYPE_SELL,trendSCol,curRow);
+    // グローバル curRow から前行を計算
+    int prevRow = curRow - dir;
+
+    // 前行のトレンドペアをクローズ（ALT 列は除外）
+    for(int i = PositionsTotal() - 1; i >= 0; --i)
+    {
+        if(!SelectPosByIndex(i)) continue;
+        int r; uint c;
+        if(!Parse(PositionGetString(POSITION_COMMENT), r, c)) continue;
+        if(r == prevRow && (c == trendBCol || c == trendSCol))
+            if(trade.PositionClose(PositionGetTicket(i)))
+                colTab[c].posCnt--;
+    }
+
+    // グローバル curRow を使って新規発注
+    Place(ORDER_TYPE_BUY ,  trendBCol, curRow);
+    Place(ORDER_TYPE_SELL, trendSCol, curRow);
 }
 
-ENUM_ORDER_TYPE AltDir(uint col,int curRow)
+ENUM_ORDER_TYPE AltDir(uint col)
 {
-   int diff=curRow-colTab[col].altRefRow;
+   int diff = curRow - colTab[col].altRefRow;
    bool even=((diff&1)==0);
    int dir=even?colTab[col].altRefDir:-colTab[col].altRefDir;
    return (dir>0)?ORDER_TYPE_BUY:ORDER_TYPE_SELL;
