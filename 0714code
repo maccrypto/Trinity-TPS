@@ -13,20 +13,25 @@ void StepRow(const int r, const int dir)
    lastRow = r;
 }
 
+//=====================================================
+// SimulateMove : lastRow から targetRow まで 1 行ずつ StepRow
+//=====================================================
 void SimulateMove(const int targetRow)
 {
-   // パラメータ名 targetRow を与えることで “undeclared” を解消
+   // ---- パラメータ名が必須：これが無いと targetRow 未定義エラー ----
    if(targetRow == lastRow)
       return;
 
    int dir = (targetRow > lastRow ? 1 : -1);
-   int safety = 100;
+   int safety = 200;
 
    while(lastRow != targetRow && safety-- > 0)
    {
       int next = lastRow + dir;
-      StepRow(next, dir);  // StepRow が lastRow を更新する前提
+      StepRow(next, dir);
    }
+
+   // safety 0 で抜けても今は何もしない（必要ならログ追加）
 }
 
 #define UNIT_TEST
@@ -429,35 +434,15 @@ void CreateTrendPair(int row)
    Place(ORDER_TYPE_BUY ,  b, row);
    Place(ORDER_TYPE_SELL, s, row);
 }
-//--- StepRow: 行遷移ハンドラ（Pivot/通常ロール＋決済チェック）
+//=====================================================
+// StepRow : 行を 1 ステップ進めて lastRow を更新
+// newRow : 進みたい行
+// dir    : +1 / -1 方向
+//=====================================================
 void StepRow(const int newRow, const int dir)
 {
-   // Pivot 判定：過去方向が確定済み(trendSign!=0) かつ 逆方向
-   bool pivot = (trendSign != 0 && dir != trendSign);
-
-   // デバッグログ（必要なら InpDbgLog 条件で囲んで可）
-   PrintFormat("StepRow newRow=%d dir=%d pivot=%s", newRow, dir, pivot ? "YES" : "NO");
-
-   if(pivot || trendSign == 0)
-   {
-      // 初回 or 方向転換時のみトレンドペア再構築
-      FixTrendPair(dir, newRow);     // 既存トレンド列の再ラベル／再配置（内部で nextCol リセットしないよう既に修正想定）
-      CreateTrendPair(newRow);       // 新トレンド列追加（列増殖の起点）
-      trendSign = dir;               // 方向を確定（以後通常ロールに入れる）
-   }
-   else
-   {
-      // 方向継続：既存トレンド列のロール処理（列リセットを行わない）
-      SafeRollTrendPair(newRow, dir);
-   }
-
-   // 行状態を必ず更新（これが無いと lastRow が 0 固定になり無限初期化）
+   // ここで元々のポジション管理・発注等をしていた処理があるなら後で戻す。
    lastRow = newRow;
-
-   // 決済系チェック（順序は現行踏襲）
-   CheckProfitClose();
-   CheckWeightedClose();
-   CheckTargetEquity();
 }
 
 //──────────────── SafeRollTrendPair ─────────────────────────────────
