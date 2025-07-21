@@ -2,8 +2,8 @@
 //|  Trinity.mq5  –  Generic Grid‑TPS Entry Core                     |
 //+------------------------------------------------------------------+
 #property strict
-+#include <Trade/Trade.mqh>
-+CTrade trade;
+#include <Trade/Trade.mqh>
+CTrade trade;
 //────────────────── UNIT_TEST フェイクロジック ────────────────────
 #ifdef UNIT_TEST
 
@@ -55,8 +55,6 @@ void SimulateMove(const int targetRow)
 }
 
 // （以下、既存の Fake API ブロック / 以降のロジックはそのまま）
-
-#define UNIT_TEST
 
 // ---- 本番用ライブラリは UT では読み込まない -----------------
 #ifndef UNIT_TEST
@@ -705,7 +703,6 @@ void UpdateFakeProfits()
       }
       return ok;
    }
-#endif
 //  ▲▲▲ ここまで UNIT_TEST ブリッジ ▲▲▲
 // ----------------------------------------------------------------
 #endif  // ─── テスト用ブロックここまで無効化 ───
