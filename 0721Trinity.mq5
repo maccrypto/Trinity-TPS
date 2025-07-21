@@ -54,124 +54,12 @@ void SimulateMove(const int targetRow)
 // （以下、既存の Fake API ブロック / 以降のロジックはそのまま）
 
 #define UNIT_TEST
-/*──────────────── Fake Position pool & API for UNIT_TEST ───────────────*/
-#ifdef UNIT_TEST
-
-// ⚠️ この塊は <Trade/Trade.mqh> より前にマクロを張り替える必要があります。
-//    1) 先に forward‑declaration とマクロを並べる
-//    2) その後で実装を置けば OK（コンパイラは後方参照を許す）
-// ---------------------------------------------------------------------
-
-struct FakePos{
-   ulong  tk;      // 擬似チケット
-   int    row;     // グリッド行
-   uint   col;     // 列番号
-   double profit;  // 擬似損益
-   int    dir;     // +1 Buy / -1 Sell
-};
-static FakePos fakePos[8192];
-static int     fakeCnt = 0;
-static ulong   nextTk  = 1;
-static int     _fpIdx  = -1;
-
-// ───────────────── forward prototypes ─────────────────
-int    Fake_PositionsTotal();
-ulong  Fake_PositionGetTicket(int idx);
-bool   Fake_PositionSelectByTicket(ulong tk);
-
-double Fake_PositionGetDouble(int property,int index=0);
-long   Fake_PositionGetInteger(int property,int index=0);
-
-string Fake_PositionGetString(int property,int index=0);
-bool   Fake_PositionGetString(int property,string &value,int index=0);
-
-bool   Fake_PositionClose(ulong tk);
-
-// ───────────────── macro remap ─────────────────
-#define PositionsTotal         Fake_PositionsTotal
-#define PositionGetTicket      Fake_PositionGetTicket
-#define PositionSelectByTicket Fake_PositionSelectByTicket
-#define PositionGetInteger     Fake_PositionGetInteger
-#define PositionGetDouble      Fake_PositionGetDouble
-#define PositionGetString      Fake_PositionGetString
-#define PositionClose          Fake_PositionClose
-
-// ───────────────── implementation ─────────────────
-int Fake_PositionsTotal(){ return fakeCnt; }
-
-ulong Fake_PositionGetTicket(int idx){ return fakePos[idx].tk; }
-
-bool Fake_PositionSelectByTicket(ulong tk)
-{
-   for(int i=0;i<fakeCnt;++i)
-      if(fakePos[i].tk==tk){ _fpIdx=i; return true; }
-   return false;
-}
-
-// helper: build "comment" string once
-inline string _FakeCmnt(){ return Cmnt(fakePos[_fpIdx].row, fakePos[_fpIdx].col); }
-
-// --- GetString overloads ---
-string Fake_PositionGetString(int property,int /*index*/=0)
-{
-   return (property==POSITION_COMMENT)?_FakeCmnt():"";
-}
-
-bool Fake_PositionGetString(int property,string &value,int /*index*/=0)
-{
-   value=(property==POSITION_COMMENT)?_FakeCmnt():"";
-   return true;
-}
-
-// --- GetDouble ---
-double Fake_PositionGetDouble(int property,int /*index*/=0)
-{
-   return (property==POSITION_PROFIT)?fakePos[_fpIdx].profit:0.0;
-}
-
-// --- GetInteger ---
-long Fake_PositionGetInteger(int property,int /*index*/=0)
-{
-   switch(property)
-   {
-      case POSITION_MAGIC: return InpMagic;
-      case POSITION_TYPE:  return (fakePos[_fpIdx].dir>0)?POSITION_TYPE_BUY:POSITION_TYPE_SELL;
-      default:             return 0;
-   }
-}
-
-// --- PositionClose ---
-bool Fake_PositionClose(ulong tk)
-{
-   for(int i=0;i<fakeCnt;++i)
-      if(fakePos[i].tk==tk){ fakePos[i]=fakePos[--fakeCnt]; return true; }
-   return false;
-}
-
-// ───────────────── Fake CTrade wrapper ─────────────────
-class FakeTrade{
-public:
-   bool Buy (double,string,double,double,double,string){ return true; }
-   bool Sell(double,string,double,double,double,string){ return true; }
-   bool PositionClose(ulong tk){ return Fake_PositionClose(tk); }
-   void SetExpertMagicNumber(int) {}
-} trade_fake;
-
-#define trade trade_fake   // 本物を完全に置換
-
-#endif // UNIT_TEST
-
-//――― Unit‑Test ビルド用フラグ
-//     ※ fake‑API マクロ置換より**前**に宣言しておくこと！
-
 
 // ---- 本番用ライブラリは UT では読み込まない -----------------
 #ifndef UNIT_TEST
    #include <Trade/Trade.mqh>
    CTrade trade;            // ← 実運用時はこちらを使う
 #endif                      // --------------------------------
-
-
 
 //────────────────────────── Inputs ───────────────────────────────
 input string  InpSymbol       = "USDJPY";   // trading symbol
