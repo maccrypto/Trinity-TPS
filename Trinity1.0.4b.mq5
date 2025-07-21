@@ -2,6 +2,34 @@
 //|  Trinity.mq5  –  Generic Grid‑TPS Entry Core                     |
 //+------------------------------------------------------------------+
 #property strict
+//────────────────── UNIT_TEST フェイクロジック ────────────────────
+#ifdef UNIT_TEST
+
+// テスト時に SetFakeComment() でコメントを入れておくための配列
+static string fakeComments[2048];
+
+// テスト時にコメントをセットするヘルパー（テストコード側で呼び出してください）
+void SetFakeComment(int idx, const string &cm)
+{
+    if(idx >= 0 && idx < ArraySize(fakeComments))
+        fakeComments[idx] = cm;
+}
+
+// Fake_PositionGetString の正しいシグネチャ
+bool Fake_PositionGetString(int idx, string &cm)
+{
+    if(idx >= 0 && idx < ArraySize(fakeComments))
+    {
+        cm = fakeComments[idx];
+        return true;
+    }
+    cm = "";
+    return false;
+}
+
+#endif
+//───────────────────────────────────────────────────────────────────
+
 #define UNIT_TEST
 #include <TrinitySim.mqh>
 
@@ -322,18 +350,10 @@ bool Parse(const string &cm, int &r, uint &c) {
     return true;
 }
 
-/**
- * @brief  インデックスからポジションコメントを取得
- * @param  idx   取得するポジションのインデックス
- * @param  cm    出力：コメント文字列
- * @return true＝コメント取得成功、false＝除外
- */
 bool GetPositionComment(int idx, string &cm)
 {
 #ifdef UNIT_TEST
-    // テスト時は fakePos 配列などから取得する実装に合わせてください
-    cm = fakeComments[idx];  
-    return(true);
+    return Fake_PositionGetString(idx, cm);
 #else
     cm = PositionGetString(POSITION_COMMENT);
     return(true);
@@ -374,9 +394,7 @@ bool HasPos(uint col, int row) {
     return false;
 }                     // 見つからず
 
-#ifdef UNIT_TEST			
-		
-#endif
+
 
 //──────────────── Market-order helper ──────────────────────────
 bool Place(ENUM_ORDER_TYPE t,
@@ -449,31 +467,37 @@ void CreateTrendPair(int row)
 // ローカル curRow 引数を削除し、必ずグローバル curRow を使う
 void SafeRollTrendPair(int dir)
 {
-    // グローバル curRow から前行を計算
+    // 前行を計算（curRow はグローバルに現在行を保持）
     int prevRow = curRow - dir;
 
-    // 前行のトレンドペアをクローズ（ALT 列は除外）
+    // 前行のトレンドペアをクローズ
     for(int i = PositionsTotal() - 1; i >= 0; --i)
     {
-        if(!SelectPosByIndex(i)) continue;
-        int r; uint c;
-        if(!Parse(PositionGetString(POSITION_COMMENT), r, c)) continue;
+        int r = 0; uint c = 0;
+        if(!GetPosRC(i, r, c)) 
+            continue;
         if(r == prevRow && (c == trendBCol || c == trendSCol))
+        {
             if(trade.PositionClose(PositionGetTicket(i)))
                 colTab[c].posCnt--;
+        }
     }
 
-    // グローバル curRow を使って新規発注
-    Place(ORDER_TYPE_BUY ,  trendBCol, curRow);
-    Place(ORDER_TYPE_SELL, trendSCol, curRow);
+    // curRow 上で新規トレンドペア発注
+    ENUM_ORDER_TYPE buyType  = (dir > 0 ? ORDER_TYPE_BUY  : ORDER_TYPE_SELL);
+    ENUM_ORDER_TYPE sellType = (dir > 0 ? ORDER_TYPE_SELL : ORDER_TYPE_BUY );
+    Place(buyType,  trendBCol, curRow);
+    Place(sellType, trendSCol, curRow);
 }
 
+//──────────────── Alternate Direction (AltDir) ───────────────────────
 ENUM_ORDER_TYPE AltDir(uint col)
 {
-   int diff = curRow - colTab[col].altRefRow;
-   bool even=((diff&1)==0);
-   int dir=even?colTab[col].altRefDir:-colTab[col].altRefDir;
-   return (dir>0)?ORDER_TYPE_BUY:ORDER_TYPE_SELL;
+    // 差分の絶対値で偶奇を判定
+    int diff = MathAbs(curRow - colTab[col].altRefRow);
+    bool even = (diff % 2 == 0);
+    int  base = (even ? colTab[col].altRefDir : -colTab[col].altRefDir);
+    return (base > 0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
 }
 
 //──────────────── Profit‑Close (Pivot) ────────────────────────────
@@ -484,12 +508,12 @@ void CheckProfitClose()
         return;
 
     // ② Pivot後１グリッド動くまで待機
-    if(trendSign > 0)  // 上昇トレンド転換
+    if(trendSign > 0)
     {
         if(lastRow < profit.refRow + 1) 
             return;
     }
-    else               // 下降トレンド転換
+    else
     {
         if(lastRow > profit.refRow - 1) 
             return;
@@ -498,7 +522,8 @@ void CheckProfitClose()
     // ③ 利確列を全ポジションクローズ
     for(int i = PositionsTotal() - 1; i >= 0; i--)
     {
-        int r = 0; uint c = 0;
+        int  r = 0; uint c = 0;
+        // ここで Select＋コメント取得＋Parse をまとめてチェック
         if(!GetPosRC(i, r, c) || c != profit.profitCol) 
             continue;
         if(trade.PositionClose(PositionGetTicket(i)))
@@ -507,19 +532,18 @@ void CheckProfitClose()
 
     // ④ r-1 行に１本だけ交互エントリーを再建て
     int rebuildRow = profit.refRow - 1;
-    // トレンド向きの逆サイドで建てる
-    ENUM_ORDER_TYPE t = (trendSign > 0 ? ORDER_TYPE_SELL : ORDER_TYPE_BUY);
+    ENUM_ORDER_TYPE t 
+      = (trendSign > 0 ? ORDER_TYPE_SELL : ORDER_TYPE_BUY);
     Place(t, profit.rebuildCol, rebuildRow, true);
     colTab[profit.rebuildCol].role = ROLE_ALT;
 
     if(InpDbgLog)
-        PrintFormat("[PROFIT-CLOSE] closed col=%u → rebuit col=%u row=%d",
+        PrintFormat("[PROFIT-CLOSE] closed col=%u → rebuilt col=%u row=%d",
                     profit.profitCol, profit.rebuildCol, rebuildRow);
 
     // ⑤ フラグクリア
     profit.active = false;
 }
-
 
 //──────────────── Break‑Even Close (WeightedClose) ─────────────────
 void CheckWeightedClose()
@@ -534,24 +558,22 @@ void CheckWeightedClose()
         if(colTab[c].role != ROLE_ALT || colTab[c].posCnt < 3 || (colTab[c].posCnt & 1) == 0)
             continue;
 
+        // --- ① P/L 集計＆方向カウント ---
         double sumProfit   = 0.0;
         int    netDirCount = 0;
         int    minBuyRow   = INT_MAX;
         int    maxSellRow  = INT_MIN;
 
-        // --- ① 全ポジション走査（インデックスループ） ---
-        ulong tickets[128];
-        int   n = 0;
         for(int i = PositionsTotal() - 1; i >= 0; i--)
         {
-            int r = 0; uint col = 0;
-            if(!GetPosRC(i, r, col) || col != c)
+            int r = 0; uint col2 = 0;
+            if(!GetPosRC(i, r, col2) || col2 != c)
                 continue;
 
-            // P/L 集計
+            // P/L
             sumProfit += PositionGetDouble(POSITION_PROFIT);
 
-            // 売買方向と行を記録
+            // Buy/Sell カウント＆行記録
             long type = PositionGetInteger(POSITION_TYPE);
             if(type == POSITION_TYPE_BUY)
             {
@@ -563,10 +585,10 @@ void CheckWeightedClose()
                 netDirCount--;
                 maxSellRow = MathMax(maxSellRow, r);
             }
-
-            tickets[n++] = PositionGetTicket(i);
         }
-        if(n == 0) 
+
+        // P/L データなしなら次へ
+        if(netDirCount == 0 && sumProfit == 0.0)
             continue;
 
         // --- ② ブレイクイーブン判定 ---
@@ -575,21 +597,15 @@ void CheckWeightedClose()
             // 残すべきポジションの行を決定
             int keepRow = (netDirCount > 0 ? minBuyRow : maxSellRow);
 
+            // --- ③ 実際のクローズループ ---
             uint closedCount = 0;
-            // --- ③ 再度ループしてクローズ対象を絞り込み ---
-            for(int k = 0; k < n; k++)
+            for(int i = PositionsTotal() - 1; i >= 0; i--)
             {
-                ulong tk = tickets[k];
-                if(!PositionSelectByTicket(tk))
+                int r2 = 0; uint col3 = 0;
+                if(!GetPosRC(i, r2, col3) || col3 != c || r2 == keepRow)
                     continue;
 
-                // コメント解析して行番号を取得
-                string cm = PositionGetString(POSITION_COMMENT);
-                int    r  = 0; uint col2 = 0;
-                if(!Parse(cm, r, col2) || col2 != c || r == keepRow)
-                    continue;  // このポジは保持
-
-                // クローズ実行
+                ulong tk = PositionGetTicket(i);
                 if(trade.PositionClose(tk))
                 {
                     closedCount++;
@@ -597,10 +613,10 @@ void CheckWeightedClose()
                 }
             }
 
-            // 即時再エントリー抑止のために現在行を記録
+            // 即時再エントリー抑止
             altClosedRow[c] = lastRow;
 
-            // 全ポジ消滅時は列を初期化
+            // 全ポジション消滅なら列リセット
             if(colTab[c].posCnt == 0)
                 colTab[c].role = ROLE_PENDING;
 
