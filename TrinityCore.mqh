@@ -88,36 +88,23 @@ void StepRow(const int newRow,const int dir)
    Log("[DBG]", StringFormat("row=%d dir=%d lastDir=%d pivot=%s",
                              newRow, dir, lastDir, pivot ? "YES":"NO"));
 
+
+// ===== Pivot が成立したらここに入る =====
 if(pivot)
 {
    Log("[PIVOT]", StringFormat("detected dir=%d at row=%d", dir, newRow));
 
-   // ---- 勝ち負け判定 ----
-   double plBuy  = AccountInfoDouble(ACCOUNT_PROFIT);   // 現在までの合計損益
-   CloseColumn(colBuy);                                 // 仮決済して差分取得
-   double plAfterCloseBuy = AccountInfoDouble(ACCOUNT_PROFIT);
-   double deltaBuy = plAfterCloseBuy - plBuy;
-   // (簡易実装：Buy 列を一旦決済→差分が正なら勝ち側、負なら負け側)
-   // Sell 列も同様に評価
-   double pl0 = AccountInfoDouble(ACCOUNT_PROFIT);
-   CloseColumn(colSell);
-   double deltaSell = AccountInfoDouble(ACCOUNT_PROFIT) - pl0;
-
-   // 戻す（本番では損益計算用のオンメモリに変える）
-   Place(ORDER_TYPE_BUY , colBuy , newRow);
-   Place(ORDER_TYPE_SELL, colSell, newRow);
-
-   // 勝者 = ROLE_PROFIT, 敗者 = ROLE_ALT
-   int winnerCol = (deltaBuy >= deltaSell) ? colBuy : colSell;
-   int loserCol  = (winnerCol == colBuy)   ? colSell: colBuy;
+   // ── ★勝ち負けを方向だけで決定★ ──
+   int winnerCol = (dir == -1) ? colSell : colBuy; // 下向きPivotなら Sell 列が勝者
+   int loserCol  = (winnerCol == colBuy) ? colSell : colBuy;
 
    colTab[winnerCol].role = ROLE_PROFIT;
    colTab[loserCol].role  = ROLE_ALT;
 
-   Log("[ROLE]", StringFormat("c=%d → PROFIT", winnerCol));
+   Log("[ROLE]", StringFormat("c=%d → PROFIT", winnerCol)); // ← この2行がログを出す
    Log("[ROLE]", StringFormat("c=%d → ALT",    loserCol));
 
-   // ---- 新 TrendPair 用列 ----
+   // ── 新 TrendPair を列 3/4/… に建てる ──
    colBuy  = nextCol++;
    colSell = nextCol++;
 
@@ -162,7 +149,11 @@ void SimulateHalfStep()
 //─── ResetAll：全ポジション／状態リセット＋Row0 TrendPair 建て直し ─
 void ResetAll()
 {
-       ArrayInitialize(colTab, 0);
+          for(int i=0; i<ArraySize(colTab); i++)   // ★ 構造体を手動で初期化
+   {
+      colTab[i].id   = 0;
+      colTab[i].role = ROLE_NONE;
+   }
    // 既存ポジ一括クローズ
    for(int i = PositionsTotal() - 1; i >= 0; --i)
    {
