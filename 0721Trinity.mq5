@@ -2,6 +2,8 @@
 //|  Trinity.mq5  –  Generic Grid‑TPS Entry Core                     |
 //+------------------------------------------------------------------+
 #property strict
++#include <Trade/Trade.mqh>
++CTrade trade;
 //────────────────── UNIT_TEST フェイクロジック ────────────────────
 #ifdef UNIT_TEST
 
@@ -30,8 +32,9 @@ bool Fake_PositionGetString(int idx, string &cm)
 #endif
 //───────────────────────────────────────────────────────────────────
 
-#define UNIT_TEST
-#include <TrinitySim.mqh>
+ #ifdef UNIT_TEST
+ #include <TrinitySim.mqh>
+ #endif
 
 int lastRow = 0;
 int StepCount = 0;
@@ -60,6 +63,7 @@ void SimulateMove(const int targetRow)
    #include <Trade/Trade.mqh>
    CTrade trade;            // ← 実運用時はこちらを使う
 #endif                      // --------------------------------
+
 
 //────────────────────────── Inputs ───────────────────────────────
 input string  InpSymbol       = "USDJPY";   // trading symbol
