@@ -322,27 +322,36 @@ bool Parse(const string &cm, int &r, uint &c) {
     return true;
 }
 
-bool GetPosRC(int idx, int &r, uint &c)
+/**
+ * @brief  インデックスからポジションコメントを取得
+ * @param  idx   取得するポジションのインデックス
+ * @param  cm    出力：コメント文字列
+ * @return true＝コメント取得成功、false＝除外
+ */
+bool GetPositionComment(int idx, string &cm)
 {
-    // ① ポジション選択
-    if(!SelectPosByIndex(idx))
-        return false;
-
-    // ② コメント取得
-    string cm="";
-  #ifndef UNIT_TEST
+#ifdef UNIT_TEST
+    // テスト時は fakePos 配列などから取得する実装に合わせてください
+    cm = fakeComments[idx];  
+    return(true);
+#else
     cm = PositionGetString(POSITION_COMMENT);
-  #else
-    Fake_PositionGetString(idx, cm);
-  #endif
-
-    // ③ Parse
-    if(!Parse(cm, r, c))
-        return false;
-
-    return true;
+    return(true);
+#endif
 }
 
+bool GetPosRC(int idx, int &r, uint &c)
+{
+    // ポジション選択
+    if(!SelectPosByIndex(idx))
+        return(false);
+    // コメント取得
+    string cm;
+    if(!GetPositionComment(idx, cm))
+        return(false);
+    // Parse
+    return(Parse(cm, r, c));
+}
 bool SelectPosByIndex(int idx) {
     // Select the position by index if it belongs to this EA (matching magic)
     if(idx < 0 || idx >= PositionsTotal()) return false;
