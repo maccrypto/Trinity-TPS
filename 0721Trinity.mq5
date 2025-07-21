@@ -44,7 +44,7 @@ void StepRow(const int r, const int dir)
    lastRow = r;
    StepCount++;
 }
-
+#if 0  // ─── テスト用ブロックここから無効化 ───
 void SimulateMove(const int targetRow)
 {
    if(targetRow == lastRow) return;
@@ -708,7 +708,7 @@ void UpdateFakeProfits()
 #endif
 //  ▲▲▲ ここまで UNIT_TEST ブリッジ ▲▲▲
 // ----------------------------------------------------------------
-
+#endif  // ─── テスト用ブロックここまで無効化 ───
 //───────────────────────────────────────────────────────────────
 int OnInit()
 {
