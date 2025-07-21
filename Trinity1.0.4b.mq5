@@ -476,58 +476,61 @@ ENUM_ORDER_TYPE AltDir(uint col)
    return (dir>0)?ORDER_TYPE_BUY:ORDER_TYPE_SELL;
 }
 
-/*―――― Profit 列決済 & r-1 Sell 再建て ――――*/
+//──────────────── Profit‑Close (Pivot) ────────────────────────────
 void CheckProfitClose()
 {
-  if(InpDbgLog)
-   PrintFormat("▶ CheckProfitClose  bid=%.5f  trigger=%.5f  active=%s",
-               CurBidUT(),
-               basePrice + (profit.refRow - 1) * GridSize,
-               profit.active ? "true":"false");
+    // ① profit.active フラグチェック
+    if(!profit.active) 
+        return;
 
-  
-   if(!profit.active) return;
+    // ② Pivot後１グリッド動くまで待機
+    if(trendSign > 0)  // 上昇トレンド転換
+    {
+        if(lastRow < profit.refRow + 1) 
+            return;
+    }
+    else               // 下降トレンド転換
+    {
+        if(lastRow > profit.refRow - 1) 
+            return;
+    }
 
-   const double trigger = basePrice + (profit.refRow - 1) * GridSize;
-   if(CurBidUT()> trigger + 1e-9)
-      return;                               // まだトリガに達していない
+    // ③ 利確列を全ポジションクローズ
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        int r = 0; uint c = 0;
+        if(!GetPosRC(i, r, c) || c != profit.profitCol) 
+            continue;
+        if(trade.PositionClose(PositionGetTicket(i)))
+            colTab[c].posCnt--;
+    }
 
-   /* ① 利確列を全クローズ */
-   uint closed = 0;
-   for(int i=PositionsTotal()-1;i>=0;--i)
-   {
-      if(!SelectPosByIndex(i)) continue;
-      int r; uint c;
-      if(!Parse(PositionGetString(POSITION_COMMENT),r,c) || c!=profit.profitCol) continue;
-      if(trade.PositionClose(PositionGetTicket(i)))
-      { colTab[c].posCnt--; ++closed; }
-   }
-   if(closed==0) return;                    // 何も無ければ抜ける
+    // ④ r-1 行に１本だけ交互エントリーを再建て
+    int rebuildRow = profit.refRow - 1;
+    // トレンド向きの逆サイドで建てる
+    ENUM_ORDER_TYPE t = (trendSign > 0 ? ORDER_TYPE_SELL : ORDER_TYPE_BUY);
+    Place(t, profit.rebuildCol, rebuildRow, true);
+    colTab[profit.rebuildCol].role = ROLE_ALT;
 
-   /* ② r-1 行に Sell を 1 本だけ再建て */
-   const int newRow = profit.refRow - 1;
-   Place(ORDER_TYPE_SELL, profit.rebuildCol, newRow, true);
-   colTab[profit.rebuildCol].role = ROLE_ALT;
+    if(InpDbgLog)
+        PrintFormat("[PROFIT-CLOSE] closed col=%u → rebuit col=%u row=%d",
+                    profit.profitCol, profit.rebuildCol, rebuildRow);
 
-   if(InpDbgLog)
-      PrintFormat("[PROFIT-CLOSE] col=%u closed=%u → Sell re-built in col=%u row=%d",
-                  profit.profitCol, closed, profit.rebuildCol, newRow);
-
-   profit.active = false;                  // 次サイクルへ
+    // ⑤ フラグクリア
+    profit.active = false;
 }
 
 
 //──────────────── Break‑Even Close (WeightedClose) ─────────────────
 void CheckWeightedClose()
 {
-    // アカウント通貨に換算した近ゼロ判定閾値（約0.5 pip相当）
+    // 近ゼロ判定の閾値（約0.5 pip 相当）
     double tickVal   = SymbolInfoDouble(InpSymbol, SYMBOL_TRADE_TICK_VALUE);
     double epsProfit = tickVal * InpLot * 0.5;
 
-    // 全 Alternate 列をチェック
     for(uint c = 1; c < nextCol; c++)
     {
-        // ROLE_ALT かつポジ数 ≥3 の奇数のみ対象
+        // ALT 列かつポジ数 ≥3 の奇数のみ対象
         if(colTab[c].role != ROLE_ALT || colTab[c].posCnt < 3 || (colTab[c].posCnt & 1) == 0)
             continue;
 
@@ -536,22 +539,19 @@ void CheckWeightedClose()
         int    minBuyRow   = INT_MAX;
         int    maxSellRow  = INT_MIN;
 
-        // ポジション情報とチケットを収集
+        // --- ① 全ポジション走査（インデックスループ） ---
         ulong tickets[128];
         int   n = 0;
         for(int i = PositionsTotal() - 1; i >= 0; i--)
         {
-            if(!SelectPosByIndex(i)) 
-                continue;
-            int r; uint col;
-            if(!Parse(PositionGetString(POSITION_COMMENT), r, col) || col != c) 
+            int r = 0; uint col = 0;
+            if(!GetPosRC(i, r, col) || col != c)
                 continue;
 
-            // P/L 合計
-            double prof = PositionGetDouble(POSITION_PROFIT);
-            sumProfit += prof;
+            // P/L 集計
+            sumProfit += PositionGetDouble(POSITION_PROFIT);
 
-            // 売買方向カウント＆最有利行を記録
+            // 売買方向と行を記録
             long type = PositionGetInteger(POSITION_TYPE);
             if(type == POSITION_TYPE_BUY)
             {
@@ -569,33 +569,35 @@ void CheckWeightedClose()
         if(n == 0) 
             continue;
 
-        // ブレイクイーブン判定：合計 P/L ≥ –epsProfit
+        // --- ② ブレイクイーブン判定 ---
         if(sumProfit >= -epsProfit)
         {
-            // 残すポジションの行を決定
+            // 残すべきポジションの行を決定
             int keepRow = (netDirCount > 0 ? minBuyRow : maxSellRow);
 
             uint closedCount = 0;
-            // 全ポジションをループし、keepRow 以外をクローズ
+            // --- ③ 再度ループしてクローズ対象を絞り込み ---
             for(int k = 0; k < n; k++)
             {
                 ulong tk = tickets[k];
-                if(!PositionSelectByTicket(tk)) 
+                if(!PositionSelectByTicket(tk))
                     continue;
-                int r; uint col;
-                if(Parse(PositionGetString(POSITION_COMMENT), r, col)
-                   && col == c && r == keepRow)
-                {
-                    // このポジは保持
-                    continue;
-                }
+
+                // コメント解析して行番号を取得
+                string cm = PositionGetString(POSITION_COMMENT);
+                int    r  = 0; uint col2 = 0;
+                if(!Parse(cm, r, col2) || col2 != c || r == keepRow)
+                    continue;  // このポジは保持
+
+                // クローズ実行
                 if(trade.PositionClose(tk))
                 {
                     closedCount++;
                     colTab[c].posCnt--;
                 }
             }
-            // 再エントリー抑止のため現在行を記録
+
+            // 即時再エントリー抑止のために現在行を記録
             altClosedRow[c] = lastRow;
 
             // 全ポジ消滅時は列を初期化
@@ -603,11 +605,12 @@ void CheckWeightedClose()
                 colTab[c].role = ROLE_PENDING;
 
             if(InpDbgLog)
-                PrintFormat("WeightedClose BE col=%u | Total P/L=%.2f | closed=%u",
+                PrintFormat("[WeightedClose] col=%u P/L=%.2f closed=%u",
                             c, sumProfit, closedCount);
         }
     }
 }
+
 
 //===== 補助関数: カラム内すべてのポジションを閉じる ==================
 void CloseEntireCol(uint col)
