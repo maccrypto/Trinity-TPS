@@ -10,33 +10,43 @@ CTrade trade;
 //================= 定数・型 =========================================
 #define MAX_COLS 128
 
-//==== 役割定義 ====================================================
-enum ROLE { ROLE_NONE, ROLE_TREND, ROLE_ALT, ROLE_PROFIT };
-
-// ALT用：最後に建てたサイドを記録する
-enum SIDE { SIDE_NONE=-1, SIDE_BUY=ORDER_TYPE_BUY, SIDE_SELL=ORDER_TYPE_SELL };
+//==== ROLE / SIDE / ANCHOR =======================================
+enum ROLE        { ROLE_NONE, ROLE_TREND, ROLE_ALT, ROLE_PROFIT };
+enum SIDE        { SIDE_NONE=-1, SIDE_BUY=ORDER_TYPE_BUY, SIDE_SELL=ORDER_TYPE_SELL };
+enum ANCHOR_TYPE { ANCH_NONE=0, ANCH_LOW=1, ANCH_HIGH=2 };
 
 //==== 列情報 ======================================================
 struct ColInfo{
-   int   id;            // 列ID (=col)
-   ROLE  role;          // TREND / ALT / PROFIT / NONE
-   int   setId;         // (id-1)/4 + 1
-   int   anchorType;    // 0:none 1:LowAnchor 2:HighAnchor（必要なら）
-   SIDE  lastSide;      // ALTが直前に持っていたサイド
-   int   lastFlipRow;   // ALTをこのrowで処理済みかどうか
+   int         id;
+   ROLE        role;
+   int         setId;
+   ANCHOR_TYPE anchor;
+   int         originRow;
+   SIDE        lastSide;
+   int         lastFlipRow;
 };
+
+// 配列
 ColInfo colTab[64];
-//==== グローバル状態 ==============================================
+
+//==== マクロで旧名を吸収（速攻で直す用）===========================
+#define anchorType  anchor
+#define lastType    lastSide
+//==== グローバル =================================================
+double  _lot       = 0.01;
+int     _magicBase = 900000;
+
 double basePrice = 0;
 int    lastRow   = 0;
 int    lastDir   = 0;
 int    StepCount = 0;
 
-int    colBuy    = 1;   // 現在の Trend_B 列
-int    colSell   = 2;   // 現在の Trend_S 列
-int    nextCol   = 3;   // 次に割り当てる列ID
+int    colBuy    = 1;
+int    colSell   = 2;
+int    nextCol   = 3;
 
-bool   g_firstMoveDone = false;  // 初動処理済みフラグ
+bool   g_firstMoveDone = false;
+
 //================= ユーティリティ ==================================
 void Log(string tag,string msg){ PrintFormat("%s  %s",tag,msg); }
 
@@ -54,14 +64,18 @@ void InitColInfo(int col)
 }
 
 //================= オーダーヘルパー群 ==============================
-void Place(int orderType,int col,int row, ROLE role=ROLE_NONE)
+// ★これだけ残す（デフォルト引数で3引数呼び出しもOKにする）
+void Place(const int orderType,
+           const int col,
+           const int row,
+           const ROLE role = ROLE_NONE)
 {
    MqlTradeRequest req;  MqlTradeResult res;
-   ZeroMemory(req);  ZeroMemory(res);
+   ZeroMemory(req); ZeroMemory(res);
 
    req.action   = TRADE_ACTION_DEAL;
    req.symbol   = _Symbol;
-   req.type     = orderType;
+   req.type     = (ENUM_ORDER_TYPE)orderType;
    req.volume   = _lot;
    req.price    = (orderType==ORDER_TYPE_BUY)
                     ? SymbolInfoDouble(_Symbol,SYMBOL_ASK)
@@ -73,23 +87,13 @@ void Place(int orderType,int col,int row, ROLE role=ROLE_NONE)
    trade.OrderSend(req,res);
 
    string side = (orderType==ORDER_TYPE_BUY) ? "Buy" : "Sell";
-   string tag  = "[NEW]";
-   if(role==ROLE_TREND)   tag = "[NEW] ";
-   else if(role==ROLE_ALT)tag = "[ALT] ";
-   else if(role==ROLE_PROFIT) tag="[PROFIT-ANCHOR] ";
-
-   Log(tag, StringFormat("r=%d c=%d %s (%s)",row,col,side,
-                         (role==ROLE_TREND)?"TREND":
-                         (role==ROLE_ALT)?"ALT":
-                         (role==ROLE_PROFIT)?"PROFIT":""));
-
-   // 列情報更新
-   colTab[col].id       = col;
-   if(role!=ROLE_NONE) colTab[col].role = role;
-   colTab[col].setId    = 1 + (col-1)/4;
-   if(role==ROLE_ALT)   colTab[col].lastSide = (SIDE)orderType;
+   Log("[NEW]", StringFormat("r=%d c=%d %s (%s)",
+        row,col,side,
+        role==ROLE_TREND ?"TREND":
+        role==ROLE_ALT   ?"ALT":
+        role==ROLE_PROFIT?"PROFIT":""));
+   // colTab 更新など…
 }
-
 
 void CloseColumn(int col)
 {
@@ -146,7 +150,7 @@ void HandleFirstMove(int newRow,int dir)
    // ALT 再建て（逆サイド）
    CloseColumn(altCol);
    int firstAltType = OppositeType(colTab[altCol].lastType);
-   Place(firstAltType, altCol, newRow, "ALT");
+ Place((int)firstAltType, altCol, newRow, ROLE_ALT);
    Log("[ROLE]", StringFormat("c=%d → ALT (first flip)", altCol));
 
    // 新 TrendPair
@@ -156,8 +160,8 @@ void HandleFirstMove(int newRow,int dir)
    colTab[colBuy].role  = ROLE_TREND;
    colTab[colSell].role = ROLE_TREND;
 
-   Place(ORDER_TYPE_BUY , colBuy , newRow, "TREND_B");
-   Place(ORDER_TYPE_SELL, colSell, newRow, "TREND_S");
+   Place(ORDER_TYPE_BUY ,  colBuy ,  newRow, ROLE_TREND);
+   Place(ORDER_TYPE_SELL,  colSell, newRow, ROLE_TREND);
 
    lastRow = newRow;
    lastDir = dir;
@@ -187,8 +191,8 @@ void HandlePivot(int newRow,int dir)
    colTab[colBuy].role  = ROLE_TREND;
    colTab[colSell].role = ROLE_TREND;
 
-   Place(ORDER_TYPE_BUY , colBuy , newRow, "TREND_B");
-   Place(ORDER_TYPE_SELL, colSell, newRow, "TREND_S");
+   Place(ORDER_TYPE_BUY ,  colBuy ,  newRow, ROLE_TREND); 
+   Place(ORDER_TYPE_SELL,  colSell, newRow, ROLE_TREND);
 
    lastRow = newRow;
    lastDir = dir;
@@ -199,8 +203,8 @@ void HandleTrendRoll(int newRow,int dir)
    CloseColumn(colBuy);
    CloseColumn(colSell);
 
-   Place(ORDER_TYPE_BUY , colBuy , newRow, "TREND_B");
-   Place(ORDER_TYPE_SELL, colSell, newRow, "TREND_S");
+   Place(ORDER_TYPE_BUY ,  colBuy ,  newRow, ROLE_TREND);
+   Place(ORDER_TYPE_SELL,  colSell, newRow, ROLE_TREND);
 
    lastRow = newRow;
    lastDir = dir;
