@@ -1,6 +1,5 @@
-
 //+------------------------------------------------------------------+
-//| TrinityCore.mqh  –  ReplayTest 用ロジック共通ヘッダ (Turn‑0)     |
+//| TrinityCore.mqh  –  ReplayTest 用ロジック共通ヘッダ (Task-1 Fix) |
 //+------------------------------------------------------------------+
 #ifndef __TRINITY_CORE_MQH__
 #define __TRINITY_CORE_MQH__
@@ -8,168 +7,261 @@
 #include <Trade\Trade.mqh>
 CTrade trade;
 
-//─── パラメータ（固定値。EA ではないので input は使わない）──────
-double  _lot       = 0.01;    // ロットサイズ
-int     _magicBase = 900000;  // マジック基底
+//================= 定数・型 =========================================
+#define MAX_COLS 128
 
-//─── グローバル状態 ───────────────────────────────────────────────
-double basePrice = 0;  // Row=0 の価格（リセット時に上書き）
-int    lastRow   = 0;  // 現在 Row
-int    colBuy    = 1;  // Trend Buy 列
-int    colSell   = 2;  // Trend Sell 列
-int    StepCount = 0;   // ← 追加：Sim.mqh の extern に対する実体
-int lastDir=0; 
-int nextCol=3;
-
-//─── ★ 追加 定義 ────────────────────────────────────────────────
-enum ROLE { ROLE_NONE, ROLE_TREND, ROLE_PROFIT, ROLE_ALT };
+enum ROLE        { ROLE_NONE, ROLE_TREND, ROLE_ALT, ROLE_PROFIT };
+enum ANCHOR_TYPE { ANCH_NONE, ANCH_LOW,  ANCH_HIGH };
 
 struct ColInfo
 {
-   int  id;      // 列 ID
-   ROLE role;    // 現在の役割
+   int         id;          // 列ID (=col)
+   ROLE        role;        // TREND / ALT / PROFIT / NONE
+   int         setId;       // 1 + (id-1)/4
+   ANCHOR_TYPE anchor;      // LOW/HIGH アンカー
+   int         lastType;    // 最後に建てた注文タイプ (ORDER_TYPE_BUY/SELL) ALT用
+   int         originRow;   // 役割が決まった基準row（初動/Pivot）
 };
-ColInfo colTab[64];            // シンプル固定長
+static ColInfo colTab[MAX_COLS];
 
-//─── ユーティリティ ─────────────────────────────────────────────
-void Log(string tag,string msg) { PrintFormat("%s  %s",tag,msg); }
+//================= グローバル状態 ==================================
+double basePrice = 0;     // Row0 価格
+int    lastRow   = 0;     // 直近Row
+int    lastDir   = 0;     // 直近進行方向 (+1/-1/0)
+int    colBuy    = 1;     // 現Trend Buy列
+int    colSell   = 2;     // 現Trend Sell列
+int    nextCol   = 3;     // 次割当列
+int    StepCount = 0;     // Sim用カウンタ
+bool g_firstMoveDone = false;
+int  lastAltFlipRow[64];   // 初期値 -999
 
-//─── 建玉ヘルパー ────────────────────────────────────────────────
-void Place(int orderType,int col,int row)
+//================= ユーティリティ ==================================
+void Log(string tag,string msg){ PrintFormat("%s  %s",tag,msg); }
+
+int  OppositeType(int t){ return (t==ORDER_TYPE_BUY)? ORDER_TYPE_SELL:ORDER_TYPE_BUY; }
+int  SetID(int col){ return 1 + (col-1)/4; }
+
+void InitColInfo(int col)
+{
+   colTab[col].id       = col;
+   colTab[col].role     = ROLE_NONE;
+   colTab[col].setId    = SetID(col);
+   colTab[col].anchor   = ANCH_NONE;
+   colTab[col].lastType = -1;
+   colTab[col].originRow= 0;
+}
+
+//================= オーダーヘルパー群 ==============================
+void Place(int orderType,int col,int row,string tag="")
 {
    MqlTradeRequest req;  MqlTradeResult res;
-   ZeroMemory(req);  ZeroMemory(res);
+   ZeroMemory(req); ZeroMemory(res);
 
-   req.action   = TRADE_ACTION_DEAL;
-   req.symbol   = _Symbol;
-   req.type     = orderType;
-   req.volume   = _lot;
-   req.price    = (orderType==ORDER_TYPE_BUY)
-                   ? SymbolInfoDouble(_Symbol,SYMBOL_ASK)
-                   : SymbolInfoDouble(_Symbol,SYMBOL_BID);
+   req.action    = TRADE_ACTION_DEAL;
+   req.symbol    = _Symbol;
+   req.type      = orderType;
+   req.volume    = 0.01;
+   req.price     = (orderType==ORDER_TYPE_BUY)
+                     ? SymbolInfoDouble(_Symbol,SYMBOL_ASK)
+                     : SymbolInfoDouble(_Symbol,SYMBOL_BID);
    req.deviation = 20;
-   req.magic     = _magicBase + col;
-   req.comment   = StringFormat("r=%d c=%d",row,col);
+   req.magic     = 900000 + col;
+   req.comment   = StringFormat("r=%d c=%d %s",row,col,tag);
 
    OrderSend(req,res);
 
-   string side = (orderType==ORDER_TYPE_BUY) ? "Buy" : "Sell";
-   Log("[NEW]",StringFormat("r=%d c=%d %s",row,col,side));
-   // ★ 追加：列情報を更新
-colTab[col].id   = col;
-colTab[col].role = ROLE_TREND;
+   colTab[col].lastType = orderType;
+
+   string side = (orderType==ORDER_TYPE_BUY) ? "Buy":"Sell";
+   Log("[NEW]", StringFormat("r=%d c=%d %s (%s)", row, col, side, tag));
 }
 
-
-//─── Trend／ALT 列を丸ごと決済 ─────────────────────
 void CloseColumn(int col)
 {
-   for(int i = PositionsTotal() - 1; i >= 0; --i)
+   for(int i=PositionsTotal()-1; i>=0; --i)
    {
       ulong ticket = PositionGetTicket(i);
-      if(ticket == 0) continue;
+      if(ticket==0) continue;
       if(!PositionSelectByTicket(ticket)) continue;
 
       long magic = PositionGetInteger(POSITION_MAGIC);
-      if(magic != _magicBase + col) continue;
+      if(magic != 900000 + col) continue;
 
       trade.PositionClose(ticket);
       Log("[CLOSE]", StringFormat("c=%d ticket=%I64u", col, ticket));
    }
 }
 
-void StepRow(const int newRow,const int dir)
+//================= ALT 更新 =========================================
+void UpdateAltColumns(int row)
 {
-   // 行カウンタ
-   StepCount++;
-
-   // ── Pivot 判定 & デバッグ表示 ──────────────────────────
-   bool pivot = (lastDir != 0 && dir != lastDir);
-   Log("[DBG]", StringFormat("row=%d dir=%d lastDir=%d pivot=%s",
-                             newRow, dir, lastDir, pivot ? "YES":"NO"));
-
-
-// ===== Pivot が成立したらここに入る =====
-if(pivot)
-{
-   Log("[PIVOT]", StringFormat("detected dir=%d at row=%d", dir, newRow));
-
-   // ── ★勝ち負けを方向だけで決定★ ──
-   int winnerCol = (dir == -1) ? colSell : colBuy; // 下向きPivotなら Sell 列が勝者
-   int loserCol  = (winnerCol == colBuy) ? colSell : colBuy;
-
-   colTab[winnerCol].role = ROLE_PROFIT;
-   colTab[loserCol].role  = ROLE_ALT;
-
-   Log("[ROLE]", StringFormat("c=%d → PROFIT", winnerCol)); // ← この2行がログを出す
-   Log("[ROLE]", StringFormat("c=%d → ALT",    loserCol));
-
-   // ── 新 TrendPair を列 3/4/… に建てる ──
-   colBuy  = nextCol++;
-   colSell = nextCol++;
-
-   Place(ORDER_TYPE_BUY , colBuy , newRow);
-   Place(ORDER_TYPE_SELL, colSell, newRow);
-
-   lastRow = newRow;
-   lastDir = dir;
-   return;
-}
-
-   // ── 通常ロール ────────────────────────────────────
-   CloseColumn(colBuy);
-   CloseColumn(colSell);
-
-   Place(ORDER_TYPE_BUY , colBuy , newRow);
-   Place(ORDER_TYPE_SELL, colSell, newRow);
-
-   lastRow = newRow;
-   lastDir = dir;              // ← 通常ロールでも更新
-   Log("[StepRow]", StringFormat("row=%d dir=%d Trend rolled", newRow, dir));
-}
-
-
-//─── SimulateMove：targetRow までループ呼び出し ─────────────────
-void SimulateMove(const int targetRow)
-{
-   int step = (targetRow > lastRow) ? +1 : -1;
-   while(lastRow != targetRow)
+   for(int c=1; c<nextCol; ++c)
    {
-      int next = lastRow + step;
-      StepRow(next, step);
+      if(colTab[c].role != ROLE_ALT) continue;
+
+      int newType = (colTab[c].lastType==-1)
+                      ? ORDER_TYPE_SELL
+                      : OppositeType(colTab[c].lastType);
+
+      CloseColumn(c);
+      Place(newType, c, row, "ALT");
+      Log("[ALT]", StringFormat("row=%d c=%d %s", row, c, (newType==ORDER_TYPE_BUY?"Buy":"Sell")));
    }
 }
 
-//─── SimulateHalfStep：半ステップ判定用（現段階は空） ────────────
+//================= 役割付けヘルパー ================================
+void HandleFirstMove(int newRow,int dir)
+{
+   Log("[INIT-MOVE]", StringFormat("dir=%d row=%d", dir, newRow));
+
+   int profitCol = (dir== 1) ? colBuy  : colSell;
+   int altCol    = (dir== 1) ? colSell : colBuy;
+
+   colTab[profitCol].role      = ROLE_PROFIT;
+   colTab[profitCol].anchor    = (dir==1)? ANCH_LOW : ANCH_HIGH;
+   colTab[profitCol].originRow = lastRow;
+   Log("[ROLE]", StringFormat("c=%d → PROFIT (%s)", profitCol,
+                              (dir==1?"LOW":"HIGH")));
+
+   colTab[altCol].role      = ROLE_ALT;
+   colTab[altCol].anchor    = ANCH_NONE;
+   colTab[altCol].originRow = lastRow;
+
+   // ALT 再建て（逆サイド）
+   CloseColumn(altCol);
+   int firstAltType = OppositeType(colTab[altCol].lastType);
+   Place(firstAltType, altCol, newRow, "ALT");
+   Log("[ROLE]", StringFormat("c=%d → ALT (first flip)", altCol));
+
+   // 新 TrendPair
+   colBuy  = nextCol++;
+   colSell = nextCol++;
+   InitColInfo(colBuy);  InitColInfo(colSell);
+   colTab[colBuy].role  = ROLE_TREND;
+   colTab[colSell].role = ROLE_TREND;
+
+   Place(ORDER_TYPE_BUY , colBuy , newRow, "TREND_B");
+   Place(ORDER_TYPE_SELL, colSell, newRow, "TREND_S");
+
+   lastRow = newRow;
+   lastDir = dir;
+}
+
+void HandlePivot(int newRow,int dir)
+{
+   Log("[PIVOT]", StringFormat("detected dir=%d at row=%d", dir, newRow));
+
+   int winnerCol = (dir==-1) ? colSell : colBuy;
+   int loserCol  = (winnerCol==colBuy) ? colSell : colBuy;
+
+   colTab[winnerCol].role      = ROLE_PROFIT;
+   colTab[winnerCol].anchor    = (dir==1)? ANCH_LOW : ANCH_HIGH; // 暫定
+   colTab[winnerCol].originRow = newRow;
+
+   colTab[loserCol].role      = ROLE_ALT;
+   colTab[loserCol].anchor    = ANCH_NONE;
+   colTab[loserCol].originRow = newRow;
+
+   Log("[ROLE]", StringFormat("c=%d → PROFIT", winnerCol));
+   Log("[ROLE]", StringFormat("c=%d → ALT",    loserCol));
+
+   colBuy  = nextCol++;
+   colSell = nextCol++;
+   InitColInfo(colBuy);  InitColInfo(colSell);
+   colTab[colBuy].role  = ROLE_TREND;
+   colTab[colSell].role = ROLE_TREND;
+
+   Place(ORDER_TYPE_BUY , colBuy , newRow, "TREND_B");
+   Place(ORDER_TYPE_SELL, colSell, newRow, "TREND_S");
+
+   lastRow = newRow;
+   lastDir = dir;
+}
+
+void HandleTrendRoll(int newRow,int dir)
+{
+   CloseColumn(colBuy);
+   CloseColumn(colSell);
+
+   Place(ORDER_TYPE_BUY , colBuy , newRow, "TREND_B");
+   Place(ORDER_TYPE_SELL, colSell, newRow, "TREND_S");
+
+   lastRow = newRow;
+   lastDir = dir;
+   Log("[StepRow]", StringFormat("row=%d dir=%d Trend rolled", newRow, dir));
+}
+
+//================= メイン入口 =======================================
+void StepRow(const int newRow,const int dir)
+{
+   StepCount++;
+
+   bool isFirstMove = (lastDir==0);
+   bool pivot       = (!isFirstMove && dir!=lastDir);
+
+   Log("[DBG]", StringFormat("row=%d dir=%d lastDir=%d pivot=%s",
+                             newRow, dir, lastDir, pivot?"YES":"NO"));
+
+   if(isFirstMove){
+      HandleFirstMove(newRow,dir);
+      //UpdateAltColumns(newRow);
+      return;
+   }
+
+   if(pivot){
+      HandlePivot(newRow,dir);
+      UpdateAltColumns(newRow);
+      return;
+   }
+
+   HandleTrendRoll(newRow,dir);
+   UpdateAltColumns(newRow);
+}
+
+//================= Sim/Reset =======================================
+void SimulateMove(const int targetRow)
+{
+   int step = (targetRow > lastRow)? +1 : -1;
+   while(lastRow != targetRow)
+   {
+      int nextRow = lastRow + step;
+      StepRow(nextRow, step);
+   }
+}
+
 void SimulateHalfStep()
 {
    Log("[HalfStep]","no‑op");
 }
 
-//─── ResetAll：全ポジション／状態リセット＋Row0 TrendPair 建て直し ─
 void ResetAll()
 {
-          for(int i=0; i<ArraySize(colTab); i++)   // ★ 構造体を手動で初期化
-   {
-      colTab[i].id   = 0;
-      colTab[i].role = ROLE_NONE;
-   }
-   // 既存ポジ一括クローズ
-   for(int i = PositionsTotal() - 1; i >= 0; --i)
+   for(int i=0;i<MAX_COLS;i++) InitColInfo(i);
+
+   for(int i=PositionsTotal()-1;i>=0;--i)
    {
       ulong ticket = PositionGetTicket(i);
-      if(ticket == 0) continue;
+      if(ticket==0) continue;
       if(!PositionSelectByTicket(ticket)) continue;
       trade.PositionClose(ticket);
    }
 
-   // 内部状態クリア
    basePrice = SymbolInfoDouble(_Symbol,SYMBOL_BID);
    lastRow   = 0;
+   lastDir   = 0;
+   colBuy    = 1;
+   colSell   = 2;
+   nextCol   = 3;
+   StepCount = 0;
+
+   InitColInfo(colBuy);  InitColInfo(colSell);
+   colTab[colBuy].role  = ROLE_TREND;
+   colTab[colSell].role = ROLE_TREND;
+
    Log("⚙️","ResetAll done");
 
-   // Row0 TrendPair 再建
-   Place(ORDER_TYPE_BUY , colBuy , 0);
-   Place(ORDER_TYPE_SELL, colSell, 0);
+   Place(ORDER_TYPE_BUY , colBuy , 0, "TREND_B");
+   Place(ORDER_TYPE_SELL, colSell, 0, "TREND_S");
 }
-#endif   // __TRINITY_CORE_MQH__
+
+#endif // __TRINITY_CORE_MQH__
