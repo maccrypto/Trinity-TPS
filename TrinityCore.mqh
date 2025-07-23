@@ -64,35 +64,50 @@ void InitColInfo(int col)
 }
 
 //================= オーダーヘルパー群 ==============================
-// ★これだけ残す（デフォルト引数で3引数呼び出しもOKにする）
-void Place(const int orderType,
-           const int col,
-           const int row,
-           const ROLE role = ROLE_NONE)
+// 役割名を文字列化する小ヘルパ
+string RoleName(const ROLE r){
+   switch(r){
+      case ROLE_TREND:  return "TREND";
+      case ROLE_ALT:    return "ALT";
+      case ROLE_PROFIT: return "PROFIT";
+      default:          return "NONE";
+   }
+}
+
+// BUY/SELL 切替ヘルパ（SIDE→ORDER_TYPE）
+int ToOrderType(const SIDE s){
+   return (s==SIDE_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+}
+
+// 統一版 Place
+bool Place(const int orderType,const int col,const int row,const ROLE role=ROLE_TREND)
 {
    MqlTradeRequest req;  MqlTradeResult res;
-   ZeroMemory(req); ZeroMemory(res);
+   ZeroMemory(req);  ZeroMemory(res);
 
    req.action   = TRADE_ACTION_DEAL;
    req.symbol   = _Symbol;
-   req.type     = (ENUM_ORDER_TYPE)orderType;
+   req.type     = orderType;
    req.volume   = _lot;
    req.price    = (orderType==ORDER_TYPE_BUY)
-                    ? SymbolInfoDouble(_Symbol,SYMBOL_ASK)
-                    : SymbolInfoDouble(_Symbol,SYMBOL_BID);
+                  ? SymbolInfoDouble(_Symbol,SYMBOL_ASK)
+                  : SymbolInfoDouble(_Symbol,SYMBOL_BID);
    req.deviation = 20;
    req.magic     = _magicBase + col;
    req.comment   = StringFormat("r=%d c=%d",row,col);
 
-   trade.OrderSend(req,res);
+   bool ok = OrderSend(req,res);
 
-   string side = (orderType==ORDER_TYPE_BUY) ? "Buy" : "Sell";
    Log("[NEW]", StringFormat("r=%d c=%d %s (%s)",
-        row,col,side,
-        role==ROLE_TREND ?"TREND":
-        role==ROLE_ALT   ?"ALT":
-        role==ROLE_PROFIT?"PROFIT":""));
-   // colTab 更新など…
+        row,col,
+        (orderType==ORDER_TYPE_BUY?"Buy":"Sell"),
+        RoleName(role)));
+
+   // 列情報更新
+   colTab[col].id   = col;
+   colTab[col].role = role;
+
+   return ok;
 }
 
 void CloseColumn(int col)
@@ -259,6 +274,14 @@ void SimulateHalfStep()
 
 void ResetAll()
 {
+   trade.SetAsyncMode(false);                 // タイムアウト防止
+trade.SetExpertMagicNumber(_magicBase);
+trade.SetDeviationInPoints(20);
+
+// 念のため
+if(!MQLInfoInteger(MQL5_TESTING) && !TerminalInfoInteger(TERMINAL_CONNECTED)){
+   Print("[WARN] terminal not connected. Skip trading.");
+
    // 配列初期化
    for(int i=0;i<ArraySize(colTab);i++){
       colTab[i].id         = 0;
@@ -268,6 +291,8 @@ void ResetAll()
       colTab[i].lastSide   = SIDE_NONE;
       colTab[i].lastFlipRow= -999;
    }
+
+}
 
    g_firstMoveDone = false;
    nextCol   = 3;
