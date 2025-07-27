@@ -1,234 +1,159 @@
-# Trinity Set Logic Spec v0.1（Draft）
+# Trinity 引き継ぎノート v2 (2025‑07‑27)
 
-貴方様の遷移図（Time/row/col/event/phase/role）および付随テキストを基に、**テンプレ依存の一般的なトレードロジックを排し**、Trinity/TPS 専用の建玉アルゴリズムを固定化するための仕様ドラフトです。
+## 0. サマリ（現状と目的）
 
-> **目的**：以後の実装・リファクタ・検証で迷わない“唯一の仕様”をここに集約する。
-> 本稿はドラフトです。誤り・不足は遠慮なく「ここ違う」と赤入れください。修正を反映し v0.2 → … と版を重ねます。
-
----
-
-## 0. 前提 / キーワード
-
-* **グリッド**：価格を一定幅（InpGridPoints）で区切った行（row）。
-* **列（col）**：建玉を識別するカラム。`magic = base + col` で紐付け。
-* **セット（Set）**：列を 4 本単位でグループ化。`Set1 = Col1–4`, `Set2 = Col5–8`, …
-* **方向（dir）**：`+1=上昇／-1=下降`。`lastDir` は直前に進んだ方向。
-* **Pivot**：進行方向が反転した瞬間。
-* **Weighted-Close**：同一カラム内の全ポジションを Break-Even（平均建値）でまとめてクローズ。
-* **TPS**：最安値Bだけを残し、その他を BE 処理する特殊利食いシステム（詳細後述）。
+* **現況**: コードは **コンパイルOK**。本日は日曜日でマーケット休場のため、**ドライラン挙動の確認が中心**（`rc=10018` 相当の market closed 系ログが想定どおり出力）。
+* **目的**: 次担当がすぐテスト・改修に入れるよう、実装仕様／ジャーナル／テスト計画／次アクションを一枚に集約。
 
 ---
 
-## 1. 用語とロール
+## 1. 実装仕様（確定ポイント）
 
-| 名称                                                      | 概要                             | 数         | 備考                                                        |
-| ------------------------------------------------------- | ------------------------------ | --------- | --------------------------------------------------------- |
-| **TrendPair**                                           | 現在進行方向の両建て（Buy/Sell）ペア         | 常に 2 本    | 初動・Pivot ごとに新規生成（例：Col1/2 → Col3/4 → Col5/6 …）            |
-| **ALT 列**                                               | セット内で常に“前グリッドの反対玉”を持ち替え続けるヘッジ列 | セット内に 2 本 | Weighted-Close の対象。Pivot/巡行で動的に入れ替わる                      |
-| **Anchor（Profit側）**                                     | セット内の最安値・最高値を保持する“アンカー列”       | セット内に 2 本 | 利食いは唯一の条件時のみ。普段は触らない                                      |
-| **ROLE\_PROFIT / ROLE\_ALT / ROLE\_TREND / ROLE\_NONE** | 実装上の属性                         | 列ごと       | Anchor=ROLE\_PROFIT, ALT=ROLE\_ALT, TrendPair=ROLE\_TREND |
+### 1.1 役割と列
 
-> ※Anchor を実装上は ROLE\_PROFIT で表現するが、「常に利食い対象」という意味ではなく **“高値/安値を押さえる列”** の意味合い。利食いトリガは一意で、後述の条件を満たした時のみ。
+* `ROLE_TREND`, `ROLE_ALT`, `ROLE_PROFIT` の3種。
+* `colBuy`, `colSell` はアクティブなトレンド対。ピボット検知で旧トレンドを `PROFIT/ALT` に昇格し、新しいトレンド対を生成。
 
----
+### 1.2 週末・休場対応（ドライラン）
 
-## 2. セットの固定ルール
+* `IsWeekend()` により休場簡易判定（日曜/土曜）。
+* `g_dryRunIfMarketClosed=true` の場合、**約定要求はブローカーに出さず**にロジックのみ前進：
 
-* 列番号とセットの対応： `setId = 1 + (col-1)/4`（整数除算）
-* **必ず 4 本 1 セット**。例外なし。
-* 新規 TrendPair（2 本）が必要になるたび、次のセット内で未使用の 2 本を消費していく。
+  * 新規：`[NEW-SIM]` を出し、列状態（`colTab[col]`）は更新。
+  * クローズ：`[CLOSE-SIM]` を出し、ブローカーへの実クローズはスキップ。
+* 休場中は実口座ポジションが動かないため、**`CheckWeightedClose()`\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\*\* はスキップ**（誤判定防止）。
 
----
+### 1.3 ALT の建玉運用
 
-## 3. 初動後の役割決定（**唯一の分岐点**）
+* `UpdateALT()` は **既存ALTをクローズせず**、**直前サイドの逆サイドを追建て**。
+* `lastFlipRow` で同一rowの多重反転を抑止。
 
-初回 BS エントリー（Col1, Col2）後、**最初に 1 グリッド動いた方向**で、その後のセット内アンカー配置が完全に決まる。例外は一切ない。
+### 1.4 Weighted‑Close（確定版仕様）
 
-### ケース A：上昇スタート（dir=+1）
+* 対象：`ROLE_ALT` カラムのみ。
+* 条件：
 
-* **Set1**：
+  1. **玉数が3以上の奇数**かつ、
+  2. **カラム内の全ポジション損益 ≥ 0**（最小損益 `minP >= 0`）
+* 条件成立時：同カラムを一括クローズ（`CloseColumn`）し、`ROLE_NONE` に落として再利用停止。
+* 備考：現行条件では **`g_wclose_eps`**\*\* は未使用\*\*（将来「全玉 ≥ −eps」に緩和したい場合は利用候補）。
 
-  * Col1 = 最安値アンカー（Low Anchor / Profit側）
-  * Col2 = ALT 開始列
-  * Col3 = （後に Pivot を迎えるまで）TrendPair or 次アンカー…※遷移図どおりに推移
-  * Col4 = 最高値アンカー（High Anchor / Profit側）
-* **Set2 (Col5–8)**：
+### 1.5 口座モードの前提
 
-  * Col5 = 最安値アンカー
-  * Col6 = ALT
-  * Col7 = ALT
-  * Col8 = 最高値アンカー
-
-### ケース B：下降スタート（dir=-1）
-
-* **Set1**：
-
-  * Col2 = 最高値アンカー
-  * Col1 = ALT
-  * Col3 = 最安値アンカー
-  * Col4 = （ALT or Trend）
-* **Set2 (Col5–8)**：
-
-  * Col6 = 最高値アンカー
-  * Col7 = 最安値アンカー
-  * Col5/8 が ALT（以降は遷移図どおり）
-
-> ※上記はテキストの「初回方向で全役割が決まる」記述を図式化したもの。細部は遷移図 No.2〜No.4 の動きで微調整する。必要なら表をさらに精密化します。
+* ログで `MarginMode=2 (HEDGING)` を出力。
+* **HEDGING 口座必須**。Netting ではALT多重建てが統合され、Weighted‑Close 条件（奇数≥3 & 全玉≥0）が成立しない。
 
 ---
 
-## 4. イベント別 処理フロー
+## 2. 主要関数メモ
 
-### 4.1 Move（同方向に row が進む／巡行）
+* `Place(int orderType,int col,int row,ROLE role)`
 
-1. **TrendPair（現行の 2 列）**：
+  * 週末時は `[NEW-SIM]` で列状態のみ更新。
+* `CloseColumn(int col)`
 
-   * 前グリッドのポジションをクローズ（必要なら）→ 新 row で両建て再建。
-2. **ALT 列**：
+  * 週末時は `[CLOSE-SIM]` でブローカー操作をスキップ。
+* `UpdateALT(int row)`
 
-   * 常に「前グリッドの反対サイド」。
-   * 進行ごとに前 ALT 玉をクローズ → 現 row で逆サイドを 1 枚建てる。
-3. **Anchor 列**：
+  * ALTの逆サイド追建て。クローズはしない。
+* `HandleFirstMove/HandlePivot/HandleTrendRoll`
 
-   * 通常は何もしない。利食いトリガ条件を満たすまで保持。
+  * 役割遷移と新トレンド対の生成。
+* `ColumnStats(int col, int &count, double &minProfit, double &netProfit)`
 
-### 4.2 Pivot（反転）
+  * カラム内のポジション数・最小損益・合計損益を集計。
+* `CheckWeightedClose()`
 
-1. **旧 TrendPair の 2 列**を **ROLE\_PROFIT / ROLE\_ALT** に“格上げ”
+  * 週末時はスキップ。平日に実ポジが存在する状況で上記条件を判定。
+* `IsWeekend()`
 
-   * どちらが Profit（Anchor）か、どちらが ALT かは向きと遷移図ルールで決定。
-2. **新 TrendPair を次セットの空き列に生成**（両建て）。
-3. **Weighted-Close**：Pivot タイミングや指定条件で ALT 列を BE 決済。
-
----
-
-## 5. Weighted-Close
-
-* **単位**：基本は **“同一カラム単位”**。
-
-  * そのカラムで保持している全ポジションを加重平均価格で BE 決済。
-* **発火条件**：遷移図・テキストに記載のあるタイミングでのみ行う。
-
-  * 例：No.7 で Col3, Col6 を一括 BE。
-* **TPS 例外**：TPS モードでは「同一セットから派生した全ポジション（最安値Bを除く）」を対象にする特例あり（後述）。
+  * `TimeToStruct(TimeTradeServer())` を使った簡易土日判定（環境差を抑制）。
 
 ---
 
-## 6. 利食い（ProfitClose）の“唯一条件”
+## 3. 実行パラメータ（現行）
 
-* 利食いは **必ず意味のある位置関係**でのみ発火。
-* 例：No.10 の `Col12 S` 利食い時（Col11 は ALT）、対応 `Col9 B` の 1 グリッド下に ALT S を置く、など **対列との相対位置**がトリガ。（※Col11 は Alternate で正しい。修正済）
-* 一般化ルール化：
-
-  * 「同一セット内アンカー同士の距離（row 差）が○○」
-  * 「他セットの ALT or Anchor との相対位置が○○」
-    上記を正確に定式化する必要あり（※ここは後述の詳細仕様化で詰める）。
+* `_lot = 0.01`
+* `_magicBase = 900000`
+* `g_dryRunIfMarketClosed = true`
+* `g_wclose_eps = 50.0`（※現行の Weighted‑Close 条件では未使用）
 
 ---
 
-## 7. TPS（Take Profit System）概要
+## 4. 最新ジャーナル（週末・休場ドライラン）
 
-* **基本ロジックは Trinity と同一**（建玉／役割付けは同じ）
-* 相違点：**BE 対象範囲**
+* 概況：開始時に `MarginMode=2 (HEDGING)` を出力。`OrderSend` は `rc=10018` 系の **market closed** で失敗ログ（想定どおり）。
+* `NEW-FAIL/CLOSE-FAIL` が並ぶのは、**休場中にブローカーが約定を拒否**するためで、設計どおり。
+* `W-CLOSE-DBG` は休場ビルドによっては出力される場合あり（最新版では休場中に判定をスキップ）。
 
-  * 「同一カラム」ではなく **“同一セット由来の全ポジション（最安値Bを除く）”** を Break-Even で整理する。
-* 最安値B（かつスワッププラス側）を永続保持し“永遠に含み益”状態を維持するのが目的。
-* 詳細条件は実装時に詰める（※後日説明頂く）。
-
----
-
-## 8. 実装指針（コード化のための骨格）
-
-### 8.1 データ構造
-
-```cpp
-struct ColInfo {
-  int  id;          // 列ID (=col)
-  ROLE role;        // ROLE_TREND / ROLE_ALT / ROLE_PROFIT / ROLE_NONE
-  int  originRow;   // 直近で役割を与えた基準 Row (Pivot/初動など)
-  int  setId;       // (id-1)/4 + 1
-  int  anchorType;  // 0=none, 1=LowAnchor, 2=HighAnchor など（任意）
-};
+```text
+2025.07.27 17:59:05.130    TrinityReplayTest (USDJPY,M1)    [Replay] start
+2025.07.27 17:59:05.130    TrinityReplayTest (USDJPY,M1)    [ENV]  MarginMode=2 (HEDGING)
+2025.07.27 17:59:05.384    TrinityReplayTest (USDJPY,M1)    CTrade::OrderSend: market sell 0.01 position #52859507644 USDJPY [market closed]
+2025.07.27 17:59:05.637    TrinityReplayTest (USDJPY,M1)    CTrade::OrderSend: market buy 0.01 position #52859507603 USDJPY [market closed]
+...（中略：market closed 系の NEW-FAIL/CLOSE-FAIL が継続）...
+2025.07.27 17:59:20.385    TrinityReplayTest (USDJPY,M1)    [Replay] end lastRow=0 steps=8
 ```
 
-### 8.2 主要関数
-
-* `StepRow(newRow, dir)`
-
-  * 初動ブロック（lastDir==0 のとき）
-  * Pivot ブロック（dir != lastDir）
-  * 通常ロール
-  * 各ブロックの最後に：`UpdateAlternate(curRow, dir)`, `CheckProfitTriggers(curRow)`, `CheckWeightedClose(curRow)` などを呼ぶ
-
-* `UpdateAlternate(curRow, dir)`
-
-  * ROLE\_ALT の各列について、前玉クローズ→逆サイドで再エントリー
-
-* `CheckProfitTriggers(curRow)`
-
-  * “唯一条件”にヒットした Profit アンカー列を決済（or 役割変換）
-
-* `CheckWeightedClose(curRow)`
-
-  * 指定条件の列（または TPS 時はセット）を BE 決済
-
-* `AllocateNewTrendPair()`
-
-  * `nextCol` を 2 つ消費、セット境界を超えたら自動で次セットへ
-
-### 8.3 ログ
-
-* `[ROLE]`, `[ALT]`, `[PROFIT]`, `[W-CLOSE]`, `[TPS]` などタグで状態を明示
-* 再現性確保のため、**row/col/dir/setId** を必ずログに載せる
+> 解析要点：`rc=10018`（market closed）により実約定は発生せず、**ロジックはdry-runで前進**する。HEDGING 環境がログで明示されているため、口座モード誤認は無し。
 
 ---
 
-## 9. テストパターンと検証指標
+## 5. テスト計画（平日：開場時）
 
-* **Pattern**：`0,1,2,1,0,1,2,1,0`（遷移図と同順）を基本とし、逆順（0,-1,-2,-1,...）も用意。
-* **検証項目例**：
+1. **起動直後の環境ログ**
 
-  * 初動で Col1–4 が正しい役割に決定されるか
-  * Pivot 毎に新 TrendPair が正しい列に割当てられるか
-  * ALT 列が毎グリッドで正しく反対玉に建て替わっているか
-  * Weighted-Close が指定 No. でだけ実行されているか
-  * 利食いログ（\[PROFIT]）が“唯一条件”でしか出ないか
+   * `[ENV] MarginMode=2 (HEDGING)` を確認。
+2. **Trend/ALT 回転の基本動作**
 
----
+   * `HandleFirstMove/HandlePivot/HandleTrendRoll` の `[ROLE]` と `[NEW]` の整合を確認。
+3. **ALT の累積**
 
-## 10. 今後の ToDo（要ご確認）
+   * 同一 ALT カラムで**奇数（3,5,7…）の建玉**が積み上がることをログで確認（`[ALT] row=... c=...` が交互に記録）。
+4. **Weighted‑Close の発火**
 
-* [ ] Anchor（High/Low）の列マップを上下初動ケースで固定化
-* [ ] ALT 交互エントリー関数 `UpdateAlternate()` を汎用化
-* [ ] 利食い“唯一条件”を式化（No.10〜12 を一般化）
-* [ ] Weighted-Close の発火条件リスト化＆実装
-* [ ] TPS：BE 対象範囲と除外（最安値B）ロジック詳細化
-* [ ] ログタグ最終決定と出力制御スイッチ（デバッグ/本番）
+   * 条件：`cnt` が奇数≥3、`minP >= 0` 到達。
+   * 発火時に `[W-CLOSE] c=.. cnt=.. net=.. (all >=0)` と **カラムの ************************************************************`ROLE_NONE`************************************************************ 落とし** を確認。
+5. **回帰**
+
+   * 週末に戻して dry-run が継続すること（`NEW-FAIL`/`CLOSE-FAIL` or `[NEW-SIM]/[CLOSE-SIM]`）を再確認。
 
 ---
 
-## 11. 変更履歴
+## 6. 次アクション
 
-| Version | Date       | Author      | Changes                       |
-| ------- | ---------- | ----------- | ----------------------------- |
-| v0.2    | 2025-07-22 | ChatGPT/貴方様 | No.10 利食い列修正(Col12 S), ToDo追記 |
-| v0.3    | 2025-07-24 | 貴方様         | Col11 Alternate 注記追記（仕様確認）    |
-
----
-
-### 次のアクション（提案）
-
-1. 本ドラフトに赤入れ（箇条書きで OK）
-2. 修正反映 → v0.2 作成
-3. v0.2 をベースに **コード差分実装（初動～Pivot～ALT 交互）** を入れる
-4. Weighted-Close / Profit 条件 / TPS を段階実装
+* \[担当A] 平日オープン後に **同一条件でリプレイ** → ジャーナルを Canvas のこの章に追記。
+* \[担当B] Weighted‑Close の**緩和版**（`全玉 ≥ −eps`）をオプション化する案を検討（`g_wclose_eps` を再活用）。
+* \[担当C] 休場中でも損益を動かせる **仮想台帳**（内部PnL）設計草案を作成（擬似価格レールでの評価損益）。
 
 ---
 
-例：No.10 の `Col12 S` 利食い時（Col11 は ALT）、
+## 7. 運用ノート（チャット軽量化のコツ）
 
-この部分のCol11だけ間違い。Col12＝Sになるはず。
-Col11はAlternate 
+* ログは **Canvas 側に全文**、チャットは **要点のみ** に分離。
+* テストごとに「開始～終了」範囲だけを貼付し、**長すぎる場合は分割**（Part1/Part2）。
+* 変更は **差分（関数単位）** を貼ると読みやすい。
 
-その他は現時点でパーフェクト。
-TPSのエントリー条件を伝えたいくらい素晴らしい解釈。
+---
+
+## 8. 付録：用語とコード断片（参照）
+
+* retcode 周辺：`rc=10018` は休場由来。週末は `OrderSend/PositionClose` が拒否されるのが通常挙動。
+* 関連ログタグ：`[ENV] [NEW] [NEW-SIM] [NEW-FAIL] [CLOSE] [CLOSE-SIM] [CLOSE-FAIL] [ALT] [ROLE] [W-CLOSE] [W-CLOSE-DBG]`。
+
+---
+
+### 9. 「新しいパト」追加実装（受領待ち）
+
+* 目的：
+* 発火条件：
+* 具体動作：
+* 評価指標：
+
+> 仕様を受領次第、この章に詳細とタスクを追記します。
+
+---
+
+**以上** — 次担当は、このノートの「テスト計画」に沿って平日開場時の検証を実施し、結果ログを本Canvasに追記してください。
+
+新しいパトとは現在未実装のLogicを新しいパーツと書き間違い。
