@@ -8,7 +8,7 @@
 #define __TRINITY_CORE_MQH__
 
 #include <Trade\Trade.mqh>
-CTrade trade;
+CTrade trade;あ
 
 #define MAX_COLS 128
 #define MAX_SETS (MAX_COLS/4 + 8)   // ★ セット数上限（4 列＝1 セット + 予備）
@@ -65,6 +65,17 @@ int    g_profit_rows_sim   = 1;     // SIM : originRow からこの行数で確�
 
 bool g_forceSim = true; 
 
+//==== 実運用向けフラグ / スワップ優先設定 / グローバルTP ==================
+bool   g_enableLog   = true;        // 実運用では false（必要最低限のログだけ）
+
+enum SWAP_KEEP { KEEP_LONG=1, KEEP_SHORT=2 };
+int    g_swap_keep   = KEEP_LONG;    // 1=ロング残し, 2=ショート残し（EA側で上書き）
+inline bool IsSwapKeepLong(){ return g_swap_keep==KEEP_LONG; }
+
+bool   g_tp_enable   = false;        // 全体TP(利益到達で全決済→即時再起動)
+double g_tp_amount   = 0.0;          // 口座通貨建ての目標利益
+
+double g_equity_start= 0.0;          // ResetAll() 時の基準エクイティ
 //==== TPS 表示用カラム番号（人が見やすい識別用。内部Indexは従来通り） ====
 int g_tpsDisplayBase = 500;
 int g_tpsDisplaySeq  = 0; 
@@ -86,7 +97,7 @@ int g_profit_pref = PROFIT_AUTO_SWAP;   // ← パラメータで上書き可
 
 //================= ユーティリティ ==================================
 string RoleName(const ROLE r){ switch(r){ case ROLE_TREND:  return "TREND"; case ROLE_ALT:    return "ALT"; case ROLE_PROFIT: return "PROFIT"; default:          return "NONE"; } }
-void   Log(string tag,string msg){ PrintFormat("%s  %s",tag,msg); }
+void   Log(string tag,string msg){ if(!g_enableLog) return; PrintFormat("%s  %s",tag,msg); }
 
 //==== 統一クローズログ（理由コード付） ===============================
 enum CLOSE_REASON { CLOSE_WCLOSE, CLOSE_PCB_HI, CLOSE_TPS_BE, CLOSE_PROFIT, CLOSE_SAFE_ROLL, CLOSE_SIM, CLOSE_PENDING, CLOSE_FORCE, CLOSE_RESET };
@@ -131,21 +142,23 @@ void UpdateSetExtremaEndOfStep(const int newRow);
 void UpdateALT(const int curRow); 
 
 // TPS 追加分（前方宣言）
-void CheckTPS(const int newRow, const int prev_row);
-void TPS_FireForSet(const int setId, const int row);
-void TPS_OpenTrendPair(const int setId, const int row, int &newBuyCol, int &newSellCol);
-int  TPS_GatherCols(const int setId, int &outCols[], const int outMax);
-bool TPS_IsAllNonAnchorBE(const int setId, const int anchorCol, const double eps);
-int  FindLowestBuyColInSet(const int setId);
-
-// --- ★ スタブ実装（最小限の本体） ---------------------------------
-void EnsureSetInitIfAlive(const int prev_row)
+void CheckTPS(const int newRow, const int prev_row)
 {
-   int mx = MaxSetIdInUse();
-   for(int s=1; s<=mx; ++s)
-   {
-      if(setPrevMin[s]==INF_I)  setPrevMin[s]  = prev_row;
-      if(setPrevMax[s]==-INF_I) setPrevMax[s]  = prev_row;
+   const int mx = MaxSetIdInUse();
+   for(int s=1; s<=mx; ++s){
+      int curMin = setPrevMin[s];
+      int curMax = setPrevMax[s];
+      if(IsSwapKeepLong()){
+         if(curMin!=INF_I && prev_row == curMin && newRow == curMin-1){
+            Log("[TPS]", StringFormat("trigger set=%d row=%d (MIN-1)", s, newRow));
+            TPS_FireForSet(s, newRow);
+         }
+      }else{
+         if(curMax!=-INF_I && prev_row == curMax && newRow == curMax+1){
+            Log("[TPS]", StringFormat("trigger set=%d row=%d (MAX+1)", s, newRow));
+            TPS_FireForSet(s, newRow);
+         }
+      }
    }
 }
 
@@ -610,57 +623,65 @@ void UpdateALT(const int curRow)
 //====================================================================
 void CheckProfitCloseBreak(const int row,const int prev_row)
 {
-   // セット配列を必要に応じて初期化
    EnsureSetInitIfAlive(prev_row);
    const int mx = MaxSetIdInUse();
 
    for(int s = 1; s <= mx; ++s)
    {
-      /* --- 発火条件 ------------------------------------------------ */
       int curMin = setPrevMin[s];
-      if(curMin == INF_I)         continue;                // 未初期化
-      if(prev_row != curMin       // ひとつ前が MIN
-      || row      != curMin - 1 ) continue;                // 今回が MIN-1
+      int curMax = setPrevMax[s];
 
-      /* --- セット内 Hi / Lo 列を抽出 ------------------------------ */
-      int hiCol=-1, loCol=-1;
-      int hiRow=-INF_I, loRow=INF_I;
+      bool fireLong  = IsSwapKeepLong() && (curMin!=INF_I)  && (prev_row==curMin && row==curMin-1);
+      bool fireShort = (!IsSwapKeepLong()) && (curMax!=-INF_I) && (prev_row==curMax && row==curMax+1);
+      if(!(fireLong || fireShort)) continue;
+
+      // --- セット内 Hi / Lo / HiSell を抽出 -----------------------
+      int hiCol=-1, loCol=-1, hiSellCol=-1;
+      int hiRow=-INF_I, loRow=INF_I, hiSellRow=-INF_I;
 
       for(int c = 1; c < nextCol; ++c)
       {
          if(colTab[c].setId != s || colTab[c].role == ROLE_NONE) continue;
          int ref = colTab[c].originRow;
-
          if(ref > hiRow || (ref == hiRow && c > hiCol)){ hiRow = ref; hiCol = c; }
          if(ref < loRow || (ref == loRow && c < loCol)){ loRow = ref; loCol = c; }
+         if((c%2)==0 && (ref>hiSellRow || (ref==hiSellRow && c>hiSellCol))){ hiSellRow=ref; hiSellCol=c; }
       }
-      if(hiCol < 0 || loCol < 0) continue;                 // 念のためガード
+      if(hiCol<0 || loCol<0) continue; // 念のため
 
-      /* -------------------------------------------------------------
-       * ① 最高値列 hiCol を利食い → role = NONE
-       * ------------------------------------------------------------*/
-      CloseColumn(hiCol);
-      LogCloseStd(hiCol, CLOSE_PCB_HI, row, (g_dryRunIfMarketClosed && g_marketClosed)?"SIM":"REAL", StringFormat("set=%d MAX at MIN-1", s));
-
-      colTab[hiCol].role        = ROLE_NONE;
-      colTab[hiCol].lastSide    = SIDE_NONE;
-      colTab[hiCol].lastFlipRow = -999;
-      colTab[hiCol].simCount    = 0;
-
-  // ALWAYS rebase loCol as ALT when P→ALT fires
-colTab[loCol].role      = ROLE_ALT;
-colTab[loCol].anchor    = ANCH_NONE;
-colTab[loCol].originRow = row;      // ← このセットの ALT 基点を“今”に更新
-colTab[loCol].originDir = lastDir;  // ← その時点のトレンド方向を記録
-colTab[loCol].simCount  = 1;        // ← 初期は“既存 1 本”のみに統一
-// lastSide / lastFlipRow は Place() が更新するのでここでは触らない
- 
-      // Sell 1 本追加（Place 成功時に simCount++ / lastSide も更新される）
-      if(Place(ORDER_TYPE_SELL, loCol, row, ROLE_ALT))
+      if(fireLong)
       {
-         Log("[P→ALT]",
-             StringFormat("set=%d baseCol=%d Sell-ALT start @row=%d",
-                          s, loCol, row));
+         // (ロング残し) MIN-1 で MAX 列を利食いし、最も低いBuy列をALT化して初手SELL
+         CloseColumn(hiCol);
+         Log("[P-CLOSE]", StringFormat("set=%d hiCol=%d MAX at MIN-1 row=%d", s, hiCol, row));
+
+         colTab[hiCol].role = ROLE_NONE; colTab[hiCol].lastSide=SIDE_NONE; colTab[hiCol].lastFlipRow=-999; colTab[hiCol].simCount=0;
+
+         colTab[loCol].role      = ROLE_ALT;
+         colTab[loCol].anchor    = ANCH_NONE;
+         colTab[loCol].originRow = row;
+         colTab[loCol].originDir = lastDir;
+         colTab[loCol].simCount  = 1;
+         if(Place(ORDER_TYPE_SELL, loCol, row, ROLE_ALT))
+            Log("[P→ALT]", StringFormat("set=%d baseCol=%d Sell-ALT start @row=%d", s, loCol, row));
+      }
+      else // fireShort
+      {
+         // (ショート残し) MAX+1 で MIN 列を利食いし、最も高いSell列をALT化して初手BUY
+         if(hiSellCol<0) continue; // アンカーSell列が見つからない場合はスキップ
+
+         CloseColumn(loCol);
+         Log("[P-CLOSE]", StringFormat("set=%d loCol=%d MIN at MAX+1 row=%d", s, loCol, row));
+
+         colTab[loCol].role = ROLE_NONE; colTab[loCol].lastSide=SIDE_NONE; colTab[loCol].lastFlipRow=-999; colTab[loCol].simCount=0;
+
+         colTab[hiSellCol].role      = ROLE_ALT;
+         colTab[hiSellCol].anchor    = ANCH_NONE;
+         colTab[hiSellCol].originRow = row;
+         colTab[hiSellCol].originDir = lastDir;
+         colTab[hiSellCol].simCount  = 1;
+         if(Place(ORDER_TYPE_BUY, hiSellCol, row, ROLE_ALT))
+            Log("[P→ALT]", StringFormat("set=%d baseCol=%d Buy-ALT start @row=%d", s, hiSellCol, row));
       }
    }
 }   // ★←ここで関数を閉じる
@@ -681,6 +702,20 @@ int FindLowestBuyColInSet(const int setId)
       }
    }
    return loCol;
+}
+
+int FindHighestSellColInSet(const int setId)
+{
+   int hiCol=-1; int hiRow=-INF_I;
+   for(int c=1;c<nextCol;++c){
+      if(colTab[c].role==ROLE_NONE) continue;
+      if(colTab[c].setId!=setId) continue;
+      if((c%2)==0){ // 規約：偶数カラム=Sell列
+         int r = colTab[c].originRow;
+         if(r>hiRow){ hiRow=r; hiCol=c; }
+      }
+   }
+   return hiCol;
 }
 
 int TPS_GatherCols(const int setId, int &outCols[], const int outMax)
@@ -830,6 +865,9 @@ void StepRow(const int newRow,const int dir)
    StepCount++;
    RefreshMarketStatus();
 
+   // ★ 全体TP：利益到達で全決済→再起動
+   if(TryGlobalTPRestart(newRow)) return;
+
    const int prevRow = lastRow;
 
    if(!g_firstMoveDone && lastDir==0){
@@ -858,6 +896,37 @@ void StepRow(const int newRow,const int dir)
    UpdateSetExtremaEndOfStep(newRow);
 }
 
+//================= 全体TP補助 ======================================
+bool CloseAllPositionsNow()
+{
+   if(g_dryRunIfMarketClosed && g_marketClosed){
+      for(int c=1;c<nextCol;++c){ colTab[c].simCount=0; colTab[c].role=ROLE_NONE; }
+      Log("[GLOBAL-TP]","dry-run close all");
+      return true;
+   }
+   for(int i=PositionsTotal()-1;i>=0;--i){
+      ulong tk=PositionGetTicket(i);
+      if(tk==0 || !PositionSelectByTicket(tk)) continue;
+      if(PositionGetString(POSITION_SYMBOL)!=_Symbol) continue;
+      trade.PositionClose(tk);
+   }
+   Log("[GLOBAL-TP]","broker close all sent");
+   return true;
+}
+
+bool TryGlobalTPRestart(const int curRow)
+{
+   if(!g_tp_enable || g_tp_amount<=0.0) return false;
+   double eq = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(eq - g_equity_start < g_tp_amount) return false;
+
+   Log("[GLOBAL-TP]", StringFormat("hit: start=%.2f now=%.2f gain=%.2f >= %.2f",
+                                   g_equity_start, eq, eq-g_equity_start, g_tp_amount));
+   CloseAllPositionsNow();
+   ResetAll();
+   return true;
+}
+
 //================= Sim/Reset ======================================
 void SimulateMove(const int targetRow)
 {
@@ -878,6 +947,10 @@ void ResetAll()
       Print("[WARN] terminal not connected. Skip trading.");
 
    RefreshMarketStatus();
+
+   // ★ 基準エクイティ更新（グローバルTP用）
+   g_equity_start = AccountInfoDouble(ACCOUNT_EQUITY);
+
 
    long mm=AccountInfoInteger(ACCOUNT_MARGIN_MODE);
    bool hedging=(mm==ACCOUNT_MARGIN_MODE_RETAIL_HEDGING);
